@@ -993,7 +993,7 @@ class RAGFusionRetriever:
             context_lines.append(f"File: {fname}\nSample Chunk: {chunk}\n---")
         schema_context = "\n".join(context_lines)
         
-        user_prompt = f"""
+        user_prompt = """
 Your goal is to extract the **single most important keyword** from a user's query. This keyword will be used to filter a database. Use the provided file chunk samples to understand the data's structure.
 
 ---
@@ -1217,15 +1217,13 @@ async def handle_request(data: Message) -> FunctionResponse:
 
 def test_query():
     params = {
-        "question": "tell me mess bill from room no 106 and 107",
-        "top_k_chunks": 10,
+        "question": " ",
+        "top_k_chunks": 100,
         "enable_references_citations": True,
         "deep_research": False,
-        "text-model": "meta/llama-3.3-70b-instruct"
     }
     config = {
-        "index_name": "army",
-        "server_type": "ARMY"
+        "index_name": "hydrostatic",
     }
     message = Message(params=params, config=config)
     res = asyncio.run(handle_request(message))
