@@ -1,5 +1,4 @@
 import os
-os.environ['HF_MODULES_CACHE'] = './jina-dependency'
 import asyncio
 import yaml
 import pymongo
@@ -9,6 +8,14 @@ import traceback
 import requests
 import time
 import httpx
+import sys
+import torch
+
+project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..', '..'))
+if project_root not in sys.path:
+    sys.path.insert(0, project_root)
+
+PROMPTS_DIR = Path(__file__).parent.parent / "prompts"
 
 LOCAL_RERANKER_PATH = "./bge-reranker-base" 
 
@@ -22,11 +29,9 @@ from sentence_transformers.cross_encoder import CrossEncoder
 from sentence_transformers import SentenceTransformer
 from transformers import AutoModel
 import nltk
-from huggingface_hub import snapshot_download
 
 from sdk.response import FunctionResponse, Messages
 from sdk.message import Message
-from utils.billing import calculatePriceByApi
 
 try:
     from sentence_transformers import SentenceTransformer
@@ -46,36 +51,9 @@ ELASTICSEARCH_API_KEY = os.getenv("ELASTICSEARCH_API_KEY")
 ES_USER = os.getenv("ELASTIC_USER")                    
 ES_PASS = os.getenv("ELASTIC_PASSWORD")
 
-mongo_url = os.getenv("MONGO_URL")
-mongo_db = os.getenv("MONGO_DB")
-
 PROVENCE_MODEL_ID = "naver/provence-reranker-debertav3-v1"
 LOCAL_PROVENCE_PATH = "./provence-model"
 LOCAL_NLTK_PATH = "./nltk_data"
-
-OFFLINE_EMBEDDING_MODEL_PATH = './jina-embeddings-v3-base'
-OFFLINE_JINA_DEPENDENCY_PATH = './jina-dependency'
-
-try:
-  mongo_client = pymongo.MongoClient(mongo_url)
-  db = mongo_client.get_database(mongo_db)
-  mongo_client.server_info()
-  print("connection to MongoDB Successfully")
-except Exception as e:
-  print(f"connection to Mongo failed {e}")
-
-def safe_fire_and_forget(coro):
-  try:
-    loop = asyncio.get_running_loop()
-    loop.create_task(ignore_exceptions(coro))
-  except RuntimeError:
-    pass  # No event loop available; skip silently
-
-async def ignore_exceptions(coro):
-  try:
-    await coro
-  except Exception:
-    pass
 
 async def init_async_openai_client() -> Optional[AsyncOpenAI]:
   openai_api_key = os.getenv("OPEN_AI_KEY")
@@ -101,12 +79,6 @@ async def check_async_elasticsearch_connection() -> Optional[AsyncElasticsearch]
                 request_timeout=60,
                 retry_on_timeout=True
             )
-    else:
-        es_client = AsyncElasticsearch(
-                hosts=[ELASTICSEARCH_URL],
-                request_timeout=60,
-                retry_on_timeout=True
-            )
 
     if not await es_client.ping():
         print("❌ Ping to Elasticsearch cluster failed. URL may be incorrect or server is down.")
@@ -118,6 +90,56 @@ async def check_async_elasticsearch_connection() -> Optional[AsyncElasticsearch]
     print(f"❌ Failed to initialize AsyncElasticsearch client: {e}")
     return None
 
+SYSTEM_PROMPT_TEMPLATE = """
+**SYSTEM PROMPT**
+
+## YOUR ROLE
+You are a sophisticated AI assistant with expertise in analyzing and synthesizing information from provided documents. Your primary function is to answer user questions accurately and comprehensively, based *exclusively* on the context provided to you.
+
+## TASK
+Your task is to generate a detailed, well-structured, and definitive answer to the user's original query. You must use the information presented in the `CONTEXT` section below. The context contains retrieved text chunks and structured data from a knowledge graph, all extracted from relevant documents.
+
+## INSTRUCTIONS
+1.  **Synthesize, Don't Just List**: Do not simply list the retrieved information. Synthesize the data from the various chunks and knowledge graph entries into a coherent, flowing answer.
+2.  **Strictly Context-Bound**: Your answer **MUST** be based solely on the provided `CONTEXT`. Do not use any external knowledge or make assumptions beyond what is written in the text.
+3.  **Acknowledge Insufficiency**: If the provided context does not contain enough information to answer the question fully, explicitly state that the answer cannot be found in the provided documents. Do not attempt to guess.
+4.  **Structured Formatting**: Present your answer in a clear and organized manner. Use markdown for formatting:
+    *   Use headings (`##`, `###`) to structure your response.
+    *   Use bullet points (`*` or `-`) for lists.
+    *   Use bolding (`**text**`) for key terms and concepts.
+    *   Use tables to present structured data or comparisons where appropriate.
+5.  **Cite Your Sources**: At the end of **each paragraph** in your answer, you **MUST** add a citation referencing the source file. Use the `File` name provided in the context for the information used in that paragraph. For example: `This is a paragraph summarizing information. [some_document.pdf]`. If a paragraph synthesizes information from multiple files, cite all of them, like `[file_one.pdf, file_two.docx]`. This is crucial for traceability.
+
+---
+
+**CONTEXT BEGINS**
+
+{context}
+
+**CONTEXT ENDS**
+
+---
+
+Based on the context above, provide a comprehensive and well-structured final answer to the original user query. Remember to cite your sources as instructed.
+
+**Final Answer:**
+# """
+
+USER_PROMPT_TEMPLATE = """
+Following all the rules, constraints, and the step-by-step methodology defined in your system role, provide a direct and clear answer to my original question based *only* on the context below.
+
+**Original Question:** "{original_query}"
+
+---
+**CONTEXT BEGINS**
+
+{context}
+
+**CONTEXT ENDS**
+---
+
+**Final Answer:**
+"""
 class RAGFusionRetriever:
     def __init__(self, params: Any, config: Any, es_client: Any, aclient_openai: Optional[AsyncOpenAI]):
         self.aclient_openai = aclient_openai
@@ -129,52 +151,12 @@ class RAGFusionRetriever:
         self.reranker = None
         self.provence_pruner = None
         self.deep_research = self.params.get('deep_research', False)
-        self.Server_type = os.getenv("SERVER_TYPE")
         self.embedding_model = None
         self.embedding_dims = OPENAI_EMBEDDING_DIMENSIONS
-
-        if self.Server_type == 'ARMY':
-          print("ARMY mode enabled. Initializing local embedding model.")
-          os.environ['TRANSFORMERS_OFFLINE'] = '1'
-          os.environ['HF_MODULES_CACHE'] = OFFLINE_JINA_DEPENDENCY_PATH
-          print(f"Set custom Hugging Face modules cache to: {OFFLINE_JINA_DEPENDENCY_PATH}")
-          
-          if self.Server_type == 'ARMY':
-            print("ARMY mode enabled. Initializing local embedding model.")
-            os.environ['TRANSFORMERS_OFFLINE'] = '1'
-
-            if SENTENCE_TRANSFORMERS_INSTALLED:
-                try:
-                    # This code will now work because the environment variable was set at the top of the file.
-                    model_path = Path(OFFLINE_EMBEDDING_MODEL_PATH)
-                    print(f"Attempting to load model directly from path: {model_path}")
-
-                    if not model_path.is_dir():
-                        print(f"❌ Local model path does not exist or is not a directory: {model_path}")
-                        self.embedding_model = None
-                    else:
-                        self.embedding_model = SentenceTransformer(
-                            str(model_path), 
-                            trust_remote_code=True
-                        )
-                        self.embedding_dims = 1024 
-                        print(f"✅ Successfully initialized local embedding model from '{model_path}' with {self.embedding_dims} dimensions.")
-
-                except Exception as e:
-                    print(f"❌ Failed to initialize SentenceTransformer model from local path: {e}")
-                    traceback.print_exc()
-                    self.embedding_model = None
-                
-          else:
-              print("❌ 'sentence-transformers' is not installed. Local embeddings will not be available.")
-        else:
-            self.embedding_dims = OPENAI_EMBEDDING_DIMENSIONS
-        
         self.reranker = None
-        self.deep_research = self.params.get('deep_research', True)
+        
         if self.deep_research:
             try:
-                # --- OFFLINE MODE CHANGE: Load reranker from local path ---
                 print(f"Deep research enabled. Initializing reranker from local path: {LOCAL_RERANKER_PATH}")
                 self.reranker = CrossEncoder(LOCAL_RERANKER_PATH)
                 print(f"CrossEncoder reranker initialized successfully from: {LOCAL_RERANKER_PATH}")
@@ -183,7 +165,7 @@ class RAGFusionRetriever:
 
     def _load_prompt_template(self, prompt_name: str) -> str:
         try:
-            prompt_file_path = Path("./prompts") / f"{prompt_name}.yaml"
+            prompt_file_path = PROMPTS_DIR / f"{prompt_name}.yaml"
             with open(prompt_file_path, 'r') as f:
                 prompt_data = yaml.safe_load(f)
 
@@ -217,9 +199,6 @@ class RAGFusionRetriever:
                             {"wildcard": {"metadata.file_name.keyword": "*.csv"}},
                             {"wildcard": {"metadata.file_name.keyword": "*.xlsx"}},
                             {"wildcard": {"metadata.file_name.keyword": "*.pdf"}},
-                            {"wildcard": {"metadata.file_name.keyword": "*.docx"}},
-                            {"wildcard": {"metadata.file_name.keyword": "*.doc"}},
-                            {"wildcard": {"metadata.file_name.keyword": "*.odt"}},
                             {"wildcard": {"metadata.file_name.keyword": "*.txt"}},
                         ]
                     }
@@ -237,59 +216,6 @@ class RAGFusionRetriever:
         except Exception as e:
             print(f"❌ Error fetching schema chunks by file: {e}")
             return {}
-    
-    async def _call_nvidia_api(
-        self,
-        payload_messages: List[Dict[str, Any]],
-        max_tokens: int = 1024,
-        temperature: float = 0.1
-    ) -> str:
-        """A unified async method to call NVIDIA text models with retry logic."""
-        
-        def call_sync_wrapper():
-            """Synchronous wrapper for the requests call to run in a separate thread."""
-            max_retries = 3
-            base_delay_seconds = 10
-            
-            model = self.params.get("text-model")
-            url = os.getenv("NVIDIA_API_URL")
-            api_key = os.getenv("NVIDIA_API_KEY")
-
-            if not all([api_key, url, model]):
-                print("❌ NVIDIA API config missing: URL, KEY, or MODEL not set.")
-                return ""
-            
-            headers = {"Content-Type": "application/json", "Authorization": f"Bearer {api_key}"}
-            data = {
-                "model": model, "messages": payload_messages, "max_tokens": max_tokens,
-                "temperature": temperature, "stream": False,
-            }
-            
-            for attempt in range(max_retries):
-                try:
-                    response = requests.post(url, headers=headers, json=data, timeout=120)
-                    response.raise_for_status()
-                    result = response.json()
-                    content = result.get("choices", [{}])[0].get("message", {}).get("content", "")
-
-                    if content:
-                        print(f"NVIDIA API call successful. Preview: {content[:100].strip()}...")
-                        return content
-                    else:
-                        print(f"NVIDIA API returned empty content. Attempt {attempt + 1}/{max_retries}")
-                
-                except requests.exceptions.RequestException as e:
-                    print(f"NVIDIA API call failed (Attempt {attempt + 1}/{max_retries}): {e}")
-                
-                if attempt + 1 < max_retries:
-                    delay = base_delay_seconds * (2 ** attempt)
-                    print(f"Waiting for {delay} seconds before retrying...")
-                    time.sleep(delay)
-
-            print("Max retries reached for NVIDIA API call. Returning empty string.")
-            return ""
-
-        return await asyncio.to_thread(call_sync_wrapper)
     
     async def _call_openai_api(
         self,
@@ -317,12 +243,9 @@ class RAGFusionRetriever:
                 )
                 
                 content = response.choices[0].message.content
-                
-                if response.usage:
-                    safe_fire_and_forget(calculatePriceByApi(self.config, self.params, response.usage, start_time))
 
                 if content:
-                    print(f"OpenAI API call successful. Preview: {content[:100].strip()}...")
+                    print(f"OpenAI API call successful. Preview: {content}")
                     return content
                 else:
                     print(f"OpenAI API returned empty content. Attempt {attempt + 1}/{max_retries}")
@@ -341,7 +264,6 @@ class RAGFusionRetriever:
     async def _classify_query_type(self, query: str) -> str:
         """
         Uses an LLM to classify the user's query into a specific category.
-        Routes to NVIDIA API if SERVER_TYPE is 'ARMY'.
         """
         classification_prompt = f"""
         You are an expert query classifier. Your task is to classify the user's query into one of the following categories based on its intent. Respond with ONLY the category name.
@@ -359,19 +281,14 @@ class RAGFusionRetriever:
         valid_types = ['factual_lookup', 'summary_extraction', 'comparison', 'complex_analysis']
         
         query_type = ""
-        if self.Server_type == 'ARMY':
-            print(f"ARMY mode: Classifying query via NVIDIA API: '{query}'")
-            messages = [{"role": "user", "content": classification_prompt}]
-            query_type = await self._call_nvidia_api(payload_messages=messages, max_tokens=20, temperature=0.0)
-        else: # Default to OpenAI
-            print(f"Classifying query via OpenAI: '{query}'")
-            messages = [{"role": "user", "content": classification_prompt}]
-            query_type = await self._call_openai_api(
-                model_name=OPENAI_CHAT_MODEL,
-                payload_messages=messages,
-                max_tokens=20,
-                temperature=0.0
-            )
+        print(f"Classifying query via OpenAI: '{query}'")
+        messages = [{"role": "user", "content": classification_prompt}]
+        query_type = await self._call_openai_api(
+            model_name=OPENAI_CHAT_MODEL,
+            payload_messages=messages,
+            max_tokens=20,
+            temperature=0.0
+        )
 
         cleaned_query_type = query_type.strip().lower()
         if cleaned_query_type in valid_types:
@@ -446,52 +363,26 @@ class RAGFusionRetriever:
         ]
         
         llm_response_content = ""
-        if self.Server_type == 'ARMY':
-            print(f"ARMY mode: Generating subqueries via NVIDIA for: '{original_query}'")
-            llm_response_content = await self._call_nvidia_api(
-                payload_messages=messages,
-                max_tokens=500,
-                temperature=0.5
-            )
-        else:
-            print(f"Generating {num_subqueries} subqueries via OpenAI for: '{original_query}'")
-            llm_response_content = await self._call_openai_api(
-                model_name=OPENAI_CHAT_MODEL,
-                payload_messages=messages,
-                max_tokens=500,
-                temperature=0.5
-            )
+        
+        print(f"Generating {num_subqueries} subqueries via OpenAI for: '{original_query}'")
+        llm_response_content = await self._call_openai_api(
+            model_name=OPENAI_CHAT_MODEL,
+            payload_messages=messages,
+            max_tokens=500,
+            temperature=0.5
+        )
 
         if not llm_response_content:
             print("LLM returned empty content for subqueries.")
             return []
 
-        # Parsing logic is slightly different for each API's typical output format
-        splitter = '\n' if self.Server_type == 'ARMY' else '\n\n'
+        splitter = '\n\n'
         subqueries = [sq.strip() for sq in llm_response_content.split(splitter) if sq.strip()]
         print(f"✅ Successfully generated {len(subqueries)} subqueries: {subqueries}")
         return subqueries[:num_subqueries]
     
     async def _generate_embedding(self, texts: List[str]) -> List[List[float]]:
         if not texts: return []
-        
-        if self.Server_type == 'ARMY':
-            embedding_service_url = os.getenv("EMBEDDING_API_URL", "http://localhost:8000/embed")
-            try:
-                async with httpx.AsyncClient(timeout=120.0) as client:
-                    print(f"Generating embeddings for {len(texts)} texts via API: {embedding_service_url}")
-                    response = await client.post(embedding_service_url, json={"texts": texts})
-                    response.raise_for_status()
-                    
-                    result = response.json()
-                    print(f"✅ Successfully received {len(result.get('embeddings', []))} embeddings from service.")
-                    return result.get('embeddings', [[] for _ in texts])
-            except httpx.RequestError as e:
-                print(f"❌ Error calling embedding service: {e}")
-                return [[] for _ in texts]
-            except Exception as e:
-                print(f"❌ An unexpected error occurred during API call to embedding service: {e}")
-                return [[] for _ in texts]
         
         if not self.aclient_openai:
             print("OpenAI client not available. Cannot generate embeddings.")
@@ -507,7 +398,7 @@ class RAGFusionRetriever:
                 response = await self.aclient_openai.embeddings.create(
                     input=processed_batch_texts, 
                     model=OPENAI_EMBEDDING_MODEL, 
-                    dimensions=self.embedding_dims  #changed
+                    dimensions=self.embedding_dims
                 )
                 all_embeddings.extend([item.embedding for item in response.data])
             return all_embeddings
@@ -986,61 +877,215 @@ class RAGFusionRetriever:
         Uses an LLM to extract the single most relevant keyword from the user query,
         using a fetched sample document for schema context.
         """
-        system_prompt = """You are an expert at information retrieval and search query optimization. Your task is to analyze a user's query and the provided data schema to extract the single most essential keyword required to perform a database search."""
         
+        query_words = set(word.lower() for word in user_query.replace('.', ' ').replace(',', ' ').split())
+        
+        system_prompt = """You are an expert at information retrieval and search query optimization. 
+Your task is to analyze a user's query and extract the SINGLE most essential keyword FROM THE USER'S QUERY ITSELF.
+The keyword you select MUST appear in the user's original query - this is a strict requirement."""
+            
         context_lines = []
         for fname, chunk in schema_chunks.items():
             context_lines.append(f"File: {fname}\nSample Chunk: {chunk}\n---")
         schema_context = "\n".join(context_lines)
         
         user_prompt = """
-Your goal is to extract the **single most important keyword** from a user's query. This keyword will be used to filter a database. Use the provided file chunk samples to understand the data's structure.
+I need you to extract the SINGLE most important keyword from the user's query below. This keyword will be used for database search filtering.
 
----
-**File Chunk Samples**
+**IMPORTANT RULES:**
+1. You MUST select a keyword that appears VERBATIM in the user's query.
+2. DO NOT invent or suggest terms that aren't explicitly in the query.
+3. Ignore any terms that might be in the domain context but not in the query.
+4. Choose the most specific and relevant term from the query.
+
+**Priority order for selection:**
+1. Specific named entities (names, IDs, unique terms)
+2. Domain-specific technical terms 
+3. Important nouns relevant to the question's subject
+4. Descriptive adjectives if they narrow the search
+5. Action verbs as a last resort
+
+**Domain Context (For understanding ONLY - do not extract terms from here):**
 {schema_context}
----
 
-**Instructions & Logic**
-1. Analyze the user's query and the file chunk samples.
-2. Identify potential keywords in the query. These can be column names or specific values.
-3. From the potential keywords, select the **single most powerful filtering term**.
-4. **Priority Rule:** A specific value like a person's name, an ID, or a unique term is the highest priority because it narrows down the search the most. A general column header is a lower priority.
-5. Return **only the single best keyword as a plain string**, not in JSON or a list.
+**User Query:** "{user_query}"
 
-**Task**
-Query: "{user_query}"
-Output:
+**Your Response:**
+Return ONLY the single chosen keyword, with no explanations, quotes, or additional text.
 """
         messages = [
             {"role": "system", "content": system_prompt},
-            {"role": "user", "content": user_prompt}
+            {"role": "user", "content": user_prompt.format(schema_context=schema_context, user_query=user_query)}
         ]
         
         llm_response_content = ""
         print(f"Extracting keyword from query via LLM: '{user_query}'")
-        if self.Server_type == 'ARMY':
-            llm_response_content = await self._call_nvidia_api(
-                payload_messages=messages, max_tokens=200, temperature=0.0
-            )
-        else:
-            llm_response_content = await self._call_openai_api(
-                model_name=OPENAI_CHAT_MODEL, payload_messages=messages, max_tokens=200, temperature=0.0
-            )
+        llm_response_content = await self._call_openai_api(
+            model_name=OPENAI_CHAT_MODEL, payload_messages=messages, max_tokens=50, temperature=0.0
+        )
 
-        if not llm_response_content:
-            print("⚠️ LLM returned no keywords. Falling back to using the original query.")
-            return [user_query]
-
-        keyword = llm_response_content.strip()
+        # if not llm_response_content:
+        #     print("⚠️ LLM returned no keywords. Falling back to using the original query.")
+        #     return [user_query]
         
-        if keyword:
-            # The downstream code expects a list of keywords, so we wrap the single keyword in a list.
-            print(f"✅ Extracted keyword: ['{keyword}']")
+        if not llm_response_content:
+            print("⚠️ LLM returned no keywords. Falling back to using the most substantial noun in query.")
+        # Choose the longest word as fallback (simple heuristic)
+            words = [w for w in user_query.split() if len(w) > 3]
+            fallback_keyword = max(words, key=len) if words else user_query
+            return [fallback_keyword]
+
+        keyword = llm_response_content.strip().lower()
+        
+        if keyword in user_query.lower():
+            print(f"✅ Extracted keyword: '{keyword}'")
             return [keyword]
         else:
-            print("⚠️ LLM returned an empty string. Falling back to using the original query.")
-            return [user_query]
+            if keyword in query_words:
+                print(f"✅ Extracted keyword (word match): '{keyword}'")
+                return [keyword]
+            else:
+                print(f"⚠️ Extracted keyword '{keyword}' not found in query. Using most specific noun instead.")
+            # Get the longest noun from the query as fallback
+                nouns = [word for word in user_query.split() if len(word) > 3 and word.lower() not in ['list', 'what', 'when', 'where', 'how', 'who', 'which']]
+                best_keyword = max(nouns, key=len) if nouns else "vessel" if "vessel" in user_query.lower() else user_query.split()[-1]
+                return [best_keyword]
+    
+    async def _determine_optimal_chunk_count(self, user_query: str, query_type: str = None) -> int:
+        """
+        Dynamically determines the optimal number of chunks to retrieve based on:
+        1. Query type and complexity
+        2. Database size and characteristics 
+        3. System resource constraints
+        """
+        # Default fallback values if analysis fails
+        default_counts = {
+            'factual_lookup': 5,
+            'summary_extraction': 10,
+            'comparison': 8,
+            'complex_analysis': 15
+        }
+        
+        try:
+            # Get query type if not provided
+            if not query_type:
+                query_type = await self._classify_query_type(user_query)
+            
+            # Step 1: Analyze database size
+            index_name = self.config.get('index_name')
+            index_stats = await self.es_client.count(index=index_name)
+            total_docs = index_stats.get('count', 1000)  # Default assumption if count fails
+            
+            print(f"Database size analysis: {total_docs} total documents in index")
+            
+            # Step 2: Calculate base chunk count based on query type
+            base_count = default_counts.get(query_type, 8)
+            
+            # Step 3: Adjust for database size
+            if total_docs < 1000:
+                # For small databases, retrieve a higher percentage
+                size_adjusted_count = max(base_count, int(total_docs * 0.05))
+            elif total_docs < 10000:
+                # For medium databases
+                size_adjusted_count = max(base_count, int(total_docs * 0.02))
+            else:
+                # For large databases
+                size_adjusted_count = max(base_count, int(total_docs * 0.01))
+                
+            # Step 4: Apply query complexity adjustments
+            complexity_factor = 1.0
+            
+            # Check for indicators of complex queries
+            if len(user_query.split()) > 15:
+                complexity_factor *= 1.3  # Longer queries may need more context
+            
+            if "compare" in user_query.lower() or "difference" in user_query.lower():
+                complexity_factor *= 1.2  # Comparative queries need more context
+                
+            if "list" in user_query.lower() or "all" in user_query.lower():
+                complexity_factor *= 1.4  # Queries asking for comprehensive lists
+                
+            # LLM-based complexity analysis (lightweight version)
+            try:
+                system_prompt = "You are an AI that evaluates query complexity. Rate the following query on a scale from 1 to 10, where 1 is extremely simple and 10 is very complex. Return ONLY the number."
+                messages = [
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": f"Query: {user_query}\n\nComplexity rating (1-10):"}
+                ]
+                
+                complexity_response = await self._call_openai_api(
+                    model_name=OPENAI_CHAT_MODEL,
+                    payload_messages=messages,
+                    max_tokens=10,
+                    temperature=0.1
+                )
+                
+                try:
+                    complexity_score = float(complexity_response.strip())
+                    if 1 <= complexity_score <= 10:
+                        # Adjust complexity factor based on LLM score (1.0 to 2.0)
+                        complexity_factor *= (1.0 + (complexity_score - 1) / 9)
+                except (ValueError, TypeError):
+                    pass  # If conversion fails, keep existing complexity factor
+                    
+            except Exception as e:
+                print(f"LLM-based complexity analysis failed: {e}")
+                # Continue with existing complexity factor
+                
+            # Apply complexity factor
+            final_count = int(size_adjusted_count * complexity_factor)
+            
+            # Step 5: Apply practical bounds
+            min_chunks = 3  # Minimum chunks to ensure we get some context
+            max_chunks = 30  # Maximum to prevent excessive resource usage
+            final_count = max(min_chunks, min(final_count, max_chunks))
+            
+            # Step 6: Account for resource constraints
+            resource_limit = self.params.get('max_chunks', 50)
+            final_count = min(final_count, resource_limit)
+            
+            print(f"Dynamic chunk count determination: {final_count} chunks for query type '{query_type}' (complexity factor: {complexity_factor:.2f})")
+            return final_count
+            
+        except Exception as e:
+            print(f"Error in optimal chunk count determination: {e}. Using default value.")
+            return default_counts.get(query_type, 10)
+        
+    async def _generate_final_answer(self, original_query: str, llm_formatted_context: str, cited_files: List[str]) -> str:
+        """Generates the final answer by sending the context to the appropriate LLM."""
+        print("\n--- Generating Final Answer based on Synthesized Context ---")
+        
+        if not llm_formatted_context or not llm_formatted_context.strip():
+            print("⚠️ Cannot generate final answer: Formatted context is empty.")
+            return "Could not generate an answer because no relevant information was found."
+        
+        user_prompt = USER_PROMPT_TEMPLATE.format(
+        original_query=original_query,
+        context=llm_formatted_context
+        )
+
+        messages = [
+        {"role": "system", "content": SYSTEM_PROMPT_TEMPLATE},
+        {"role": "user", "content": user_prompt}
+    ]
+        max_tokens = 16000
+
+        final_answer = ""
+        print("Default mode: Routing final answer generation to OpenAI API.")
+        final_answer = await self._call_openai_api(
+                model_name=OPENAI_CHAT_MODEL,
+                payload_messages=messages,
+                max_tokens=max_tokens,
+                temperature=0.3
+            )
+        
+        if final_answer:
+            print("✅ Successfully generated final answer.")
+            return final_answer
+        else:
+            error_msg = f"The {OPENAI_CHAT_MODEL} model returned an empty response."
+            print(f"❌ {error_msg}")
+            return error_msg
 
     async def search(
         self,
@@ -1106,7 +1151,6 @@ Output:
                  original_query_embedding[0], initial_candidate_pool_size, top_k_kg_entities
              ) 
                 
-                
         if self.reranker and self.deep_research:
             print("Deep research is ON. Reranking and pruning will be applied to the final candidate pool.")
             retrieved_chunks = await self._rerank_documents(user_query, retrieved_chunks, "chunk", absolute_score_floor)
@@ -1129,42 +1173,51 @@ Output:
                     "retrieved_kg_data": final_kg_evidence_for_output
                 }]
         
-        show_references = self.params.get('enable_references_citations', False)
-        citations_str = ''
-        if show_references:
-            cited_files = set()
-
-            for sq_result in processed_subquery_results:
-                for chunk in sq_result.get("reranked_chunks", []):
-                    if chunk.get("file_name"):
-                        cited_files.add(chunk["file_name"])
-                
-                for kg_item in sq_result.get("retrieved_kg_data", []):
-                    if kg_item.get("file_name"):
-                        cited_files.add(kg_item["file_name"])
-
-            if show_references and cited_files:
-                citations_str = (
-                    "\n\n**Sources:**\n"
-                    + "\n".join(f"- {name}" for name in sorted(list(cited_files)))
-                    + "\n\n**Cite Your Sources**: When presenting information, reference its source."
-                    "Place these citations/sources at the end of the relevant sentences or paragraphs to ensure traceability if the response consists of more than one source. "
-                    "Also, include all cited sources again at the end of the response too seprately and highlighted."
-                )
-
         final_results_dict = {
             "original_query": user_query,
             "sub_queries_results": processed_subquery_results,
-            "refrences": citations_str
+            # "refrences": citations_str
         }
         
         llm_formatted_context = self._format_search_results_for_llm(
             original_query=user_query,
             sub_queries_results=processed_subquery_results 
         )
-        final_results_dict["llm_formatted_context"] = llm_formatted_context + final_results_dict['refrences']
+        final_results_dict["llm_formatted_context"] = llm_formatted_context
         
-        print(f"RAG Fusion search fully completed for user query: '{user_query}'. Formatted context generated.")
+        show_citations = self.params.get('enable_references_citations', False)
+        # show_references = self.params.get('reference', False)
+        
+
+        if show_citations:
+            cited_files = set()
+            referenced_chunk_ids = set()
+
+            for sq_result in processed_subquery_results:
+                for chunk in sq_result.get("reranked_chunks", []):
+                    if chunk.get("file_name"):
+                        cited_files.add(chunk["file_name"])
+                    # if chunk.get("id"):
+                    #     referenced_chunk_ids.add(chunk["id"])
+                
+                for kg_item in sq_result.get("retrieved_kg_data", []):
+                    if kg_item.get("file_name"):
+                        cited_files.add(kg_item["file_name"])
+                    # if kg_item.get("id"):
+                    #     referenced_chunk_ids.add(kg_item["id"])
+            
+            final_answer = await self._generate_final_answer(
+            original_query=user_query,
+            llm_formatted_context=llm_formatted_context,
+            cited_files=list(cited_files),
+        )
+        
+        final_results_dict["final_answer"] = final_answer
+        
+        print("\n--- Final Answer ---")
+        print(f'{final_answer}', "No optimized context generated.")
+
+        print(f"RAG Fusion search fully completed for user query: '{user_query}'. Formatted context and final answer generated.")
         return final_results_dict
 
 async def handle_request(data: Message) -> FunctionResponse:
@@ -1175,28 +1228,34 @@ async def handle_request(data: Message) -> FunctionResponse:
     print('Incoming Data:--', data)
     params = data.params
     config = data.config
-    server_type = data.config.get('server_type', os.getenv('SERVER_TYPE'))
 
     es_client = await check_async_elasticsearch_connection()
     if not es_client:
       return FunctionResponse(False, "Could not connect to Elasticsearch.")
     
-    if server_type != "ARMY":
-            aclient_openai = await init_async_openai_client()
-            # The check for aclient_openai can be uncommented when you use it
-            if not aclient_openai:
-                return FunctionResponse(False, "Could not connect to Open Ai.")
+    aclient_openai = await init_async_openai_client()
+    if not aclient_openai:
+        return FunctionResponse(False, "Could not connect to Open Ai.")
 
     retriever = RAGFusionRetriever(params, config, es_client, aclient_openai)
     user_query_input = params.get('question')
-    top_k_chunks = int(params.get('top_k_chunks', 6))
+    
+    query_type = await retriever._classify_query_type(user_query_input)
+
+    if params.get('auto_chunk_sizing', True):  # Allow override with a flag
+        top_k_chunks = await retriever._determine_optimal_chunk_count(user_query_input, query_type)
+        print(f"Determined optimal chunk count: {top_k_chunks} for query type '{query_type}'")
+    else:
+        # Use provided value or default
+        top_k_chunks = int(params.get('top_k_chunks', 6))
+    
     print(f"\n--- Running RAG Fusion Search for: '{user_query_input}' ---")
     search_results_dict = await retriever.search(
         user_query=user_query_input, initial_candidate_pool_size=top_k_chunks, top_k_kg_entities=top_k_chunks, absolute_score_floor=0.3
     )
     print("\n--- Search Results Dictionary (RAG Fusion: Chunks & KG Reranked if applicable) ---")
     
-    print("\n--- LLM Formatted Context ---")
+    # print("\n--- LLM Formatted Context ---")
     # print(search_results_dict.get("llm_formatted_context", "No formatted context generated."))
 
     if es_client and hasattr(es_client, 'close'):
@@ -1217,8 +1276,8 @@ async def handle_request(data: Message) -> FunctionResponse:
 
 def test_query():
     params = {
-        "question": " ",
-        "top_k_chunks": 100,
+        "question": "List the main characteristics of the vessel",
+        "top_k_chunks": 1,
         "enable_references_citations": True,
         "deep_research": False,
     }
