@@ -962,8 +962,8 @@ Return ONLY the single chosen keyword, with no explanations, quotes, or addition
         default_counts = {
             'factual_lookup': 5,
             'summary_extraction': 10,
-            'comparison': 8,
-            'complex_analysis': 15
+            'comparison': 25,
+            'complex_analysis': 30
         }
         
         try:
