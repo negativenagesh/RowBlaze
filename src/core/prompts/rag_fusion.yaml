@@ -3,8 +3,7 @@ rag_fusion:
     ### Instruction:
 
 
-    Given the following query, generate a double newline separated list of search queries that are relevant to the original query.
-    Generate as many queries as you see fit to best answer the user's question, but no more than 5. Each query should be a self-contained question.
+    Given the following query that follows to write a double newline separated list of up to {num_outputs} queries meant to help answer the original query.
 
     DO NOT generate any single query which is likely to require information from multiple distinct documents,
 
@@ -24,4 +23,5 @@ rag_fusion:
 
     ### Response:
   input_types:
+    num_outputs: int
     message: str
