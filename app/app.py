@@ -26,7 +26,7 @@ from sdk.response import FunctionResponse, Messages
 
 # Set page configuration
 st.set_page_config(
-    page_title="RAG Chatbot",
+    page_title="RowBlaze",
     page_icon="🗿",
     layout="wide",
     initial_sidebar_state="expanded"
