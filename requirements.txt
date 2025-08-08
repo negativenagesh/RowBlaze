@@ -27,3 +27,5 @@ openpyxl
 sentence-transformers
 nltk
 torch
+
+streamlit
