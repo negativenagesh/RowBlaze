@@ -165,9 +165,8 @@ CHUNKED_PDF_MAPPINGS = {
 
 class PDFParser:
     """A parser for extracting tables and text from PDF files using pdfplumber."""
-
-    def __init__(self, aclient_openai: Optional[AsyncOpenAI],processor_ref: Optional[Any] = None):
         
+    def __init__(self, aclient_openai: Optional[AsyncOpenAI], processor_ref: Optional[Any] = None):
         self.aclient_openai = aclient_openai
         self.processor_ref = processor_ref
         self.vision_prompt_text = self._load_vision_prompt()
@@ -339,16 +338,20 @@ class ChunkingEmbeddingPDFProcessor:
         self.aclient_openai = aclient_openai
         self.embedding_model = None
         self.embedding_dims = OPENAI_EMBEDDING_DIMENSIONS
-      
-        if file_extension in [".pdf", ".docx", ".doc", ".odt", ".txt"]:
-            chunk_size = 2048
-            chunk_overlap = 1024
-            print(f"Using DOCX specific chunking: size={chunk_size}, overlap={chunk_overlap}")
-        # else:
-        #     chunk_size = CHUNK_SIZE_TOKENS
-        #     chunk_overlap = CHUNK_OVERLAP_TOKENS
-        #     print(f"Using default chunking: size={chunk_size}, overlap={chunk_overlap}")
-
+        
+        if file_extension in [".docx", ".doc", ".odt", ".txt"]:
+            chunk_size = 1024
+            chunk_overlap = 512
+            print(f"Using document-specific chunking: size={chunk_size}, overlap={chunk_overlap}")
+        elif file_extension in [".csv", ".xlsx"]:
+            chunk_size = 2000000
+            chunk_overlap = 0
+            print(f"Using spreadsheet-specific chunking: size={chunk_size}, overlap={chunk_overlap}")
+        else:
+            chunk_size = CHUNK_SIZE_TOKENS
+            chunk_overlap = CHUNK_OVERLAP_TOKENS
+            print(f"Using default chunking: size={chunk_size}, overlap={chunk_overlap}")
+        
         self.text_splitter = RecursiveCharacterTextSplitter(
           chunk_size=chunk_size,
           chunk_overlap=chunk_overlap,
@@ -902,12 +905,12 @@ class ChunkingEmbeddingPDFProcessor:
 
                 if pages_with_tables > 1:
                     print(f"PDF contains tables on {pages_with_tables} pages. Adjusting chunk size to 2048.")
-                    self.text_splitter = RecursiveCharacterTextSplitter(
-                        chunk_size=2048,
-                        chunk_overlap=1024,
-                        length_function=tiktoken_len,
-                        separators=["\n|", "\n", "|", ". "," ", ""],
-                    )
+                self.text_splitter = RecursiveCharacterTextSplitter(
+                    chunk_size=2048,
+                    chunk_overlap=1024,
+                    length_function=tiktoken_len,
+                    separators=["\n|", "\n", "|", ". "," ", ""],
+                )
         except Exception as e:
             print(f"Could not pre-check PDF with pdfplumber, defaulting to OCR. Error: {e}")
             use_ocr = True
@@ -1511,10 +1514,10 @@ async def handle_request(data: Message) -> FunctionResponse:
 
 def test():
     params = {
-        "index_name": "hydrostatic",
-        "file_name": "G-12 BH424-100-006 HYDROSTATIC TABLES.pdf",
-        "file_path": '/Users/hari/Downloads/G-12 BH424-100-006 HYDROSTATIC TABLES.pdf',
-        "description": "This is a test document for hydrostatic tables.",
+        "index_name": "messbill-rowblaze",
+        "file_name": "GbhMAYMessBill.pdf",
+        "file_path": '/Users/hari/Downloads/GbhMAYMessBill.pdf',
+        "description": "messbill",
         "is_ocr_pdf": False,
     }
     
