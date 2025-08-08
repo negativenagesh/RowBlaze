@@ -45,22 +45,91 @@ def initialize_session_state():
         st.session_state.file_queue = []  # Track files and their status
     if "currently_processing" not in st.session_state:
         st.session_state.currently_processing = False
+    if "indexed_files" not in st.session_state:
+        st.session_state.indexed_files = []  # Store fetched file names
+    if "files_last_fetched" not in st.session_state:
+        st.session_state.files_last_fetched = 0
     
-    # Create index if it doesn't exist
+    # Create index if it doesn't exist and fetch files periodically
     if "index_checked" not in st.session_state:
-        asyncio.run(ensure_index_exists(st.session_state.index_name))
-        st.session_state.index_checked = True
+        try:
+            asyncio.run(ensure_index_exists(st.session_state.index_name))
+            st.session_state.index_checked = True
+        except Exception as e:
+            print(f"Error creating index: {e}")
+            st.session_state.index_checked = False
+    
+    # Fetch files if we haven't done so recently (every 30 seconds)
+    import time
+    current_time = time.time()
+    if current_time - st.session_state.files_last_fetched > 30:
+        try:
+            print("Fetching indexed files...")
+            st.session_state.indexed_files = asyncio.run(fetch_unique_files_from_es(st.session_state.index_name))
+            st.session_state.files_last_fetched = current_time
+            print(f"Fetched {len(st.session_state.indexed_files)} files")
+        except Exception as e:
+            print(f"Error fetching files: {e}")
 
 def apply_custom_css():
     """Apply custom CSS for Grok-inspired UI."""
     st.markdown("""
     <style>
-        /* Main theme - dark background with gradient, light text */
+        /* Main theme - updated background with new gradient, light text */
         .stApp {
-            background: #4f4a4a;
-            background: linear-gradient(90deg, rgba(79, 74, 74, 1) 100%, rgba(0, 212, 255, 1) 0%);
+            background: #2e2b2b;
+            background: linear-gradient(90deg, rgba(46, 43, 43, 1) 100%, rgba(0, 212, 255, 1) 0%);
             color: #fafafa;
             font-family: 'Montserrat', 'Roboto', sans-serif;
+        }
+        
+        /* Sidebar specific styling with black gradient */
+        .css-1d391kg, .css-1lcbmhc, .css-17eq0hr, .css-1y4p8pa, .css-12oz5g7, 
+        section[data-testid="stSidebar"], .css-ng1t4o, .css-1cypcdb, .css-18e3th9 {
+            background: #000000 !important;
+            background: linear-gradient(90deg, rgba(0, 0, 0, 1) 100%, rgba(0, 212, 255, 1) 0%) !important;
+        }
+        
+        /* Sidebar content area */
+        .css-1lcbmhc .css-17eq0hr {
+            background: #000000 !important;
+            background: linear-gradient(90deg, rgba(0, 0, 0, 1) 100%, rgba(0, 212, 255, 1) 0%) !important;
+        }
+        
+        /* Alternative sidebar selectors for different Streamlit versions */
+        [data-testid="stSidebar"] > div:first-child {
+            background: #000000 !important;
+            background: linear-gradient(90deg, rgba(0, 0, 0, 1) 100%, rgba(0, 212, 255, 1) 0%) !important;
+        }
+        
+        /* Sidebar text color to ensure visibility on black background */
+        .css-1d391kg, .css-1lcbmhc, .css-17eq0hr, .css-1y4p8pa, .css-12oz5g7,
+        section[data-testid="stSidebar"] * {
+            color: #fafafa !important;
+        }
+        
+        /* Sidebar headers */
+        section[data-testid="stSidebar"] h1, 
+        section[data-testid="stSidebar"] h2, 
+        section[data-testid="stSidebar"] h3 {
+            color: #ffffff !important;
+        }
+        
+        /* Sidebar text areas and inputs */
+        section[data-testid="stSidebar"] .stTextArea textarea {
+            background-color: #1a1a1a !important;
+            color: #ffffff !important;
+            border: 1px solid #3a7be0 !important;
+        }
+        
+        /* File uploader in sidebar */
+        section[data-testid="stSidebar"] .stFileUploader {
+            background-color: transparent !important;
+        }
+        
+        section[data-testid="stSidebar"] .stFileUploader > div {
+            background-color: #1a1a1a !important;
+            border: 1px solid #3a7be0 !important;
         }
         
         /* Improved typography */
@@ -198,6 +267,23 @@ def apply_custom_css():
             color: #f8f8f2;
         }
         
+        /* File item styling for sidebar */
+        .file-item {
+            padding: 8px 12px;
+            margin: 4px 0;
+            background-color: #1a1a1a !important;
+            border-radius: 6px;
+            border-left: 3px solid #3a7be0;
+            font-size: 0.9em;
+            color: #ffffff !important;
+        }
+        
+        .file-count {
+            color: #cccccc !important;
+            font-size: 0.8em;
+            margin-top: 5px;
+        }
+        
         /* Add custom font imports */
         @import url('https://fonts.googleapis.com/css2?family=Montserrat:wght@300;400;500;600;700&display=swap');
     </style>
@@ -292,20 +378,17 @@ async def process_file_upload(uploaded_file):
             temp.write(uploaded_file.getvalue())
             temp_path = temp.name
         
-        # Debug: Print the parameters being sent
+        # Create message object for ingestion
         params = {
             "index_name": st.session_state.index_name,
             "file_name": uploaded_file.name,
             "file_path": temp_path,
             "description": st.session_state.get("doc_description", f"Uploaded document: {uploaded_file.name}"),
             "is_ocr_pdf": st.session_state.get("is_ocr", False),
-            "chunk_size": 1000,
-            "chunk_overlap": 200,
+            "chunk_size": 1024,
+            "chunk_overlap": 512,
         }
         
-        print(f"Debug - Parameters being sent: {params}")
-        
-        # Create message object for ingestion
         message = Message(
             params=params,
             config={
@@ -324,6 +407,14 @@ async def process_file_upload(uploaded_file):
         
         if response.failed:
             return False, f"Error: {response.message}"
+        
+        # Refresh the indexed files list after successful upload
+        print("File uploaded successfully, refreshing file list...")
+        # Add a small delay to ensure the document is indexed
+        import asyncio
+        await asyncio.sleep(2)
+        st.session_state.indexed_files = await fetch_unique_files_from_es(st.session_state.index_name)
+        st.session_state.files_last_fetched = time.time()
         
         return True, "Document successfully processed and indexed."
     except Exception as e:
@@ -500,6 +591,87 @@ async def ensure_index_exists(index_name: str):
         traceback.print_exc()
         return False
 
+# Add this function to fetch unique files from Elasticsearch
+
+async def fetch_unique_files_from_es(index_name: str) -> List[str]:
+    """Fetch all unique file names from the Elasticsearch index using the correct field mapping."""
+    try:
+        # Import the connection function from the same module used in retrieval
+        from src.core.retrieval.rag_retrieval import check_async_elasticsearch_connection
+        
+        es_client = await check_async_elasticsearch_connection()
+        if not es_client:
+            print("Could not connect to Elasticsearch to fetch files.")
+            return []
+            
+        try:
+            # First check if the index exists
+            if not await es_client.indices.exists(index=index_name):
+                print(f"Index '{index_name}' does not exist")
+                return []
+            
+            # Get aggregation of unique file names using the exact field mapping from ingestion
+            # FIXED: Remove the 'size' parameter and use only 'body'
+            response = await es_client.search(
+                index=index_name,
+                body={
+                    "size": 0,  # Moved inside body
+                    "aggs": {
+                        "unique_files": {
+                            "terms": {
+                                "field": "metadata.file_name",  # Use the exact field from CHUNKED_PDF_MAPPINGS
+                                "size": 1000  # Get up to 1000 unique file names
+                            }
+                        }
+                    }
+                }
+            )
+            
+            # Extract file names from the aggregation buckets
+            unique_files = []
+            if "aggregations" in response and "unique_files" in response["aggregations"]:
+                buckets = response["aggregations"]["unique_files"]["buckets"]
+                print(f"Found {len(buckets)} unique files in aggregation")
+                for bucket in buckets:
+                    file_name = bucket["key"]
+                    doc_count = bucket["doc_count"]
+                    unique_files.append(file_name)
+                    print(f"File: {file_name} (chunks: {doc_count})")
+            else:
+                print("No aggregations found in response")
+                # Fallback: try to get some sample documents to see the structure
+                sample_response = await es_client.search(
+                    index=index_name,
+                    body={
+                        "size": 5,
+                        "_source": ["metadata.file_name"],
+                        "query": {"match_all": {}}
+                    }
+                )
+                
+                if "hits" in sample_response and "hits" in sample_response["hits"]:
+                    print("Sample documents found:")
+                    for hit in sample_response["hits"]["hits"]:
+                        print(f"Document structure: {hit.get('_source', {})}")
+                        if "metadata" in hit["_source"] and "file_name" in hit["_source"]["metadata"]:
+                            file_name = hit["_source"]["metadata"]["file_name"]
+                            if file_name not in unique_files:
+                                unique_files.append(file_name)
+                    
+            print(f"Total unique files found: {len(unique_files)}")
+            return sorted(unique_files) if unique_files else []
+            
+        finally:
+            if es_client and hasattr(es_client, 'close'):
+                await es_client.close()
+                print("Elasticsearch client closed.")
+            
+    except Exception as e:
+        print(f"Error fetching unique files: {e}")
+        import traceback
+        traceback.print_exc()
+        return []
+
 # Main application function
 def main():
     initialize_session_state()
@@ -582,17 +754,67 @@ def main():
         
         # Display file queue in sidebar
         if st.session_state.file_queue:
-            st.markdown("### Uploaded Files")
+            st.markdown("### Current Upload Queue")
             for idx, file_info in enumerate(st.session_state.file_queue):
                 status_color = {
                     "pending": "⚪",
-                    "processing": "🔄",
+                    "processing": "🔄", 
                     "completed": "✅",
                     "failed": "❌"
                 }
                 status_icon = status_color.get(file_info["status"], "⚪")
+                st.markdown(f"{status_icon} {file_info['name']} - {file_info['message']}")
+        
+        # Add a refresh button for files
+        col1, col2 = st.columns([3, 1])
+        with col1:
+            st.markdown("### Files in Index")
+        with col2:
+            if st.button("🔄", help="Refresh file list"):
+                with st.spinner("Refreshing..."):
+                    st.session_state.indexed_files = asyncio.run(fetch_unique_files_from_es(st.session_state.index_name))
+                    st.session_state.files_last_fetched = time.time()
+                    st.rerun()
+        
+        # Display all indexed files from Elasticsearch - MOVED INSIDE SIDEBAR
+        if st.session_state.indexed_files:
+            # Add CSS for a nice looking file list
+            st.markdown("""
+            <style>
+            .file-item {
+                padding: 8px 12px;
+                margin: 4px 0;
+                background-color: #2d2d2d;
+                border-radius: 6px;
+                border-left: 3px solid #3a7be0;
+                font-size: 0.9em;
+            }
+            .file-count {
+                color: #888;
+                font-size: 0.8em;
+                margin-top: 5px;
+            }
+            </style>
+            """, unsafe_allow_html=True)
+            
+            for file_name in st.session_state.indexed_files:
+                st.markdown(f"""
+                <div class="file-item">
+                    📄 {file_name}
+                </div>
+                """, unsafe_allow_html=True)
+            
+            # Show total count
+            st.markdown(f"""
+            <div class="file-count">
+                Total files: {len(st.session_state.indexed_files)}
+            </div>
+            """, unsafe_allow_html=True)
+        else:
+            st.markdown("*No files indexed yet*")
+            st.markdown("Upload a document to get started!")
     
-    # Main area
+    # Main area - REMOVED FILE DISPLAY CODE FROM HERE
     display_header()
     
     st.markdown("<div class='chat-container'>", unsafe_allow_html=True)
