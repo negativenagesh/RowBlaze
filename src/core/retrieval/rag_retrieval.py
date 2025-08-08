@@ -185,37 +185,119 @@ class RAGFusionRetriever:
     
     async def _fetch_schema_chunks_by_file(self) -> Dict[str, str]:
         """
-        Returns a mapping: file_name -> first chunk_text for that file (for .csv/.xlsx files only).
+        Returns a mapping: file_name -> first chunk_text for that file for all document types.
+        Collects exactly one sample chunk per file type.
         """
         index_name = self.config.get('index_name')
         schema_chunks = {}
+        
         try:
-            response = await self.es_client.search(
-                index=index_name,
-                size=1000,
-                query={
-                    "bool": {
-                        "should": [
-                            {"wildcard": {"metadata.file_name.keyword": "*.csv"}},
-                            {"wildcard": {"metadata.file_name.keyword": "*.xlsx"}},
-                            {"wildcard": {"metadata.file_name.keyword": "*.pdf"}},
-                            {"wildcard": {"metadata.file_name.keyword": "*.txt"}},
-                        ]
+            # Primary approach: Try to get file names from metadata.file_name.keyword field
+            try:
+                # First, get a list of all unique file names in the index
+                file_names_response = await self.es_client.search(
+                    index=index_name,
+                    size=0,  # We don't need documents, just the aggregation
+                    aggs={
+                        "unique_files": {
+                            "terms": {
+                                "field": "metadata.file_name.keyword",
+                                "size": 1000  # Get up to 1000 unique file names
+                            }
+                        }
                     }
-                },
-                _source_includes=["chunk_text", "metadata.file_name"]
-            )
-            seen_files = set()
-            for hit in response.get('hits', {}).get('hits', []):
-                file_name = hit.get('_source', {}).get('metadata', {}).get('file_name')
-                if file_name and file_name not in seen_files:
-                    schema_chunks[file_name] = hit.get('_source', {}).get('chunk_text', '')
-                    seen_files.add(file_name)
-            print(f"Schema chunks for most relevent keyword extraction: {schema_chunks}")
+                )
+                
+                # Extract the unique file names from the aggregation
+                unique_files = [
+                    bucket.get("key") 
+                    for bucket in file_names_response.get("aggregations", {}).get("unique_files", {}).get("buckets", [])
+                ]
+                
+                print(f"Found {len(unique_files)} unique files in index: {unique_files}")
+                
+                # For each unique file, get one sample chunk
+                for file_name in unique_files:
+                    try:
+                        # Get one chunk from this file
+                        file_chunk_response = await self.es_client.search(
+                            index=index_name,
+                            size=1,
+                            query={
+                                "term": {
+                                    "metadata.file_name.keyword": file_name
+                                }
+                            },
+                            _source_includes=["chunk_text", "metadata.file_name"]
+                        )
+                        
+                        # Extract the chunk text
+                        hits = file_chunk_response.get("hits", {}).get("hits", [])
+                        if hits:
+                            source = hits[0].get("_source", {})
+                            chunk_text = source.get("chunk_text", "")
+                            schema_chunks[file_name] = chunk_text
+                            print(f"Added sample chunk for file: {file_name} (length: {len(chunk_text)} chars)")
+                    except Exception as e:
+                        print(f"Error fetching chunk for file {file_name}: {e}")
+                        continue
+                    
+            except Exception as e:
+                print(f"Error during file name aggregation: {e}")
+                # Continue to fallbacks if the aggregation approach fails
+            
+            # First fallback: If no chunks found by file name, just get any documents
+            if not schema_chunks:
+                print("No schema chunks found by file name aggregation, trying direct search...")
+                direct_search_response = await self.es_client.search(
+                    index=index_name,
+                    size=20,  # Get a reasonable number of docs
+                    _source_includes=["chunk_text", "metadata.file_name"]
+                )
+                
+                seen_files = set()
+                for hit in direct_search_response.get('hits', {}).get('hits', []):
+                    source = hit.get('_source', {})
+                    metadata = source.get('metadata', {})
+                    file_name = metadata.get('file_name', f"unknown_file_{len(seen_files)}")
+                    
+                    if file_name and file_name not in seen_files:
+                        chunk_text = source.get('chunk_text', '')
+                        if chunk_text:
+                            schema_chunks[file_name] = chunk_text
+                            seen_files.add(file_name)
+                            print(f"Fallback: Added sample chunk for file: {file_name}")
+                            
+            # Final fallback: If still no chunks found, just get one document with ANY structure
+            if not schema_chunks:
+                print("Second fallback: Getting any document from the index...")
+                try:
+                    # Simplest possible query to get just one document
+                    any_doc_response = await self.es_client.search(
+                        index=index_name,
+                        size=1,
+                        query={"match_all": {}}
+                    )
+                    
+                    hits = any_doc_response.get('hits', {}).get('hits', [])
+                    if hits:
+                        source = hits[0].get('_source', {})
+                        # Look for text in common field names
+                        for text_field in ['chunk_text', 'text', 'content', 'body']:
+                            if text_field in source:
+                                schema_chunks["generic_document"] = source.get(text_field)
+                                print(f"Emergency fallback: Found content in '{text_field}' field")
+                                break
+                except Exception as e:
+                    print(f"Final fallback query failed: {e}")
+                    
+            print(f"Successfully retrieved {len(schema_chunks)} schema chunks for keyword extraction")
             return schema_chunks
+                    
         except Exception as e:
             print(f"❌ Error fetching schema chunks by file: {e}")
-            return {}
+            traceback.print_exc()
+            return {}  # Return empty dict as last resort if everything fails
     
     async def _call_openai_api(
         self,
@@ -878,78 +960,56 @@ class RAGFusionRetriever:
         using a fetched sample document for schema context.
         """
         
-        query_words = set(word.lower() for word in user_query.replace('.', ' ').replace(',', ' ').split())
+        system_prompt = """You are an expert at information retrieval and search query optimization. Your task is to analyze a user's query and the provided data schema to extract the single most essential keyword required to perform a database search."""
         
-        system_prompt = """You are an expert at information retrieval and search query optimization. 
-Your task is to analyze a user's query and extract the SINGLE most essential keyword FROM THE USER'S QUERY ITSELF.
-The keyword you select MUST appear in the user's original query - this is a strict requirement."""
-            
         context_lines = []
         for fname, chunk in schema_chunks.items():
             context_lines.append(f"File: {fname}\nSample Chunk: {chunk}\n---")
         schema_context = "\n".join(context_lines)
         
-        user_prompt = """
-I need you to extract the SINGLE most important keyword from the user's query below. This keyword will be used for database search filtering.
+        user_prompt = f"""
+Your goal is to extract the **single most important keyword** from a user's query. This keyword will be used to filter a database. Use the provided file chunk samples to understand the data's structure.
 
-**IMPORTANT RULES:**
-1. You MUST select a keyword that appears VERBATIM in the user's query.
-2. DO NOT invent or suggest terms that aren't explicitly in the query.
-3. Ignore any terms that might be in the domain context but not in the query.
-4. Choose the most specific and relevant term from the query.
-
-**Priority order for selection:**
-1. Specific named entities (names, IDs, unique terms)
-2. Domain-specific technical terms 
-3. Important nouns relevant to the question's subject
-4. Descriptive adjectives if they narrow the search
-5. Action verbs as a last resort
-
-**Domain Context (For understanding ONLY - do not extract terms from here):**
+---
+**File Chunk Samples**
 {schema_context}
+---
 
-**User Query:** "{user_query}"
+**Instructions & Logic**
+1. Analyze the user's query and the file chunk samples.
+2. Identify potential keywords in the query. These can be column names or specific values.
+3. From the potential keywords, select the **single most powerful filtering term**.
+4. **Priority Rule:** A specific value like a person's name, an ID, or a unique term is the highest priority because it narrows down the search the most. A general column header is a lower priority.
+5. Return **only the single best keyword as a plain string**, not in JSON or a list.
 
-**Your Response:**
-Return ONLY the single chosen keyword, with no explanations, quotes, or additional text.
+**Task**
+Query: "{user_query}"
+Output:
 """
         messages = [
             {"role": "system", "content": system_prompt},
-            {"role": "user", "content": user_prompt.format(schema_context=schema_context, user_query=user_query)}
+            {"role": "user", "content": user_prompt}
         ]
         
         llm_response_content = ""
         print(f"Extracting keyword from query via LLM: '{user_query}'")
         llm_response_content = await self._call_openai_api(
-            model_name=OPENAI_CHAT_MODEL, payload_messages=messages, max_tokens=50, temperature=0.0
+            model_name=OPENAI_CHAT_MODEL, payload_messages=messages, max_tokens=200, temperature=0.0
         )
 
-        # if not llm_response_content:
-        #     print("⚠️ LLM returned no keywords. Falling back to using the original query.")
-        #     return [user_query]
-        
         if not llm_response_content:
-            print("⚠️ LLM returned no keywords. Falling back to using the most substantial noun in query.")
-        # Choose the longest word as fallback (simple heuristic)
-            words = [w for w in user_query.split() if len(w) > 3]
-            fallback_keyword = max(words, key=len) if words else user_query
-            return [fallback_keyword]
+            print("⚠️ LLM returned no keywords. Falling back to using the original query.")
+            return [user_query]
 
-        keyword = llm_response_content.strip().lower()
+        keyword = llm_response_content.strip()
         
-        if keyword in user_query.lower():
-            print(f"✅ Extracted keyword: '{keyword}'")
+        if keyword:
+            # The downstream code expects a list of keywords, so we wrap the single keyword in a list.
+            print(f"✅ Extracted keyword: ['{keyword}']")
             return [keyword]
         else:
-            if keyword in query_words:
-                print(f"✅ Extracted keyword (word match): '{keyword}'")
-                return [keyword]
-            else:
-                print(f"⚠️ Extracted keyword '{keyword}' not found in query. Using most specific noun instead.")
-            # Get the longest noun from the query as fallback
-                nouns = [word for word in user_query.split() if len(word) > 3 and word.lower() not in ['list', 'what', 'when', 'where', 'how', 'who', 'which']]
-                best_keyword = max(nouns, key=len) if nouns else "vessel" if "vessel" in user_query.lower() else user_query.split()[-1]
-                return [best_keyword]
+            print("⚠️ LLM returned an empty string. Falling back to using the original query.")
+            return [user_query]
     
     async def _determine_optimal_chunk_count(self, user_query: str, query_type: str = None) -> int:
         """
@@ -1149,7 +1209,7 @@ Return ONLY the single chosen keyword, with no explanations, quotes, or addition
         if original_query_embedding and original_query_embedding[0]:
              retrieved_kg_evidence_with_chunk_text = await self._structured_kg_search(
                  original_query_embedding[0], initial_candidate_pool_size, top_k_kg_entities
-             ) 
+             )
                 
         if self.reranker and self.deep_research:
             print("Deep research is ON. Reranking and pruning will be applied to the final candidate pool.")
@@ -1173,53 +1233,49 @@ Return ONLY the single chosen keyword, with no explanations, quotes, or addition
                     "retrieved_kg_data": final_kg_evidence_for_output
                 }]
         
+        processed_subquery_results = [{
+                    "sub_query_text": user_query,
+                    "reranked_chunks": retrieved_chunks,
+                    "retrieved_kg_data": final_kg_evidence_for_output
+                }]
+        
+        show_references = self.params.get('enable_references_citations', False)
+        citations_str = ''
+        if show_references:
+            cited_files = set()
+
+            for sq_result in processed_subquery_results:
+                for chunk in sq_result.get("reranked_chunks", []):
+                    if chunk.get("file_name"):
+                        cited_files.add(chunk["file_name"])
+                
+                for kg_item in sq_result.get("retrieved_kg_data", []):
+                    if kg_item.get("file_name"):
+                        cited_files.add(kg_item["file_name"])
+
+            if cited_files:
+                citations_str = (
+                    "\n\n**Sources:**\n"
+                    + "\n".join(f"- {name}" for name in sorted(list(cited_files)))
+                    + "\n\n**Cite Your Sources**: When presenting information, reference its source."
+                    "Place these citations/sources at the end of the relevant sentences or paragraphs to ensure traceability if the response consists of more than one source. "
+                    "Also, include all cited sources again at the end of the response too seprately and highlighted."
+                )
+
         final_results_dict = {
             "original_query": user_query,
             "sub_queries_results": processed_subquery_results,
-            # "refrences": citations_str
+            "refrences": citations_str
         }
         
         llm_formatted_context = self._format_search_results_for_llm(
             original_query=user_query,
             sub_queries_results=processed_subquery_results 
         )
-        final_results_dict["llm_formatted_context"] = llm_formatted_context
+        final_results_dict["llm_formatted_context"] = llm_formatted_context + citations_str
         
-        show_citations = self.params.get('enable_references_citations', False)
-        # show_references = self.params.get('reference', False)
-        
-
-        if show_citations:
-            cited_files = set()
-            referenced_chunk_ids = set()
-
-            for sq_result in processed_subquery_results:
-                for chunk in sq_result.get("reranked_chunks", []):
-                    if chunk.get("file_name"):
-                        cited_files.add(chunk["file_name"])
-                    # if chunk.get("id"):
-                    #     referenced_chunk_ids.add(chunk["id"])
-                
-                for kg_item in sq_result.get("retrieved_kg_data", []):
-                    if kg_item.get("file_name"):
-                        cited_files.add(kg_item["file_name"])
-                    # if kg_item.get("id"):
-                    #     referenced_chunk_ids.add(kg_item["id"])
-            
-            final_answer = await self._generate_final_answer(
-            original_query=user_query,
-            llm_formatted_context=llm_formatted_context,
-            cited_files=list(cited_files),
-        )
-        
-        final_results_dict["final_answer"] = final_answer
-        
-        print("\n--- Final Answer ---")
-        print(f'{final_answer}', "No optimized context generated.")
-
-        print(f"RAG Fusion search fully completed for user query: '{user_query}'. Formatted context and final answer generated.")
         return final_results_dict
-
+    
 async def handle_request(data: Message) -> FunctionResponse:
   es_client: Optional[AsyncElasticsearch] = None
   aclient_openai: Optional[AsyncOpenAI] = None
@@ -1229,6 +1285,38 @@ async def handle_request(data: Message) -> FunctionResponse:
     params = data.params
     config = data.config
 
+    # Check if this is a request to generate a final answer from context
+    if params.get('generate_final_answer') and params.get('context') and params.get('question'):
+      aclient_openai = await init_async_openai_client()
+      if not aclient_openai:
+        return FunctionResponse(False, "Could not connect to OpenAI for final answer generation.")
+        
+      # Create a simple retriever just for answer generation
+      retriever = RAGFusionRetriever(params, config, None, aclient_openai)
+      
+      context = params.get('context')
+      query = params.get('question')
+      
+      # Extract cited files from context if available
+      cited_files = []
+      if "**Sources:**" in context:
+        sources_section = context.split("**Sources:**")[1].split("\n\n")[0]
+        cited_files = [line.replace("- ", "").strip() for line in sources_section.strip().split("\n")]
+      
+      # Generate the final answer
+      final_answer = await retriever._generate_final_answer(
+        original_query=query,
+        llm_formatted_context=context,
+        cited_files=cited_files
+      )
+      
+      if aclient_openai and hasattr(aclient_openai, "aclose"):
+        await aclient_openai.aclose()
+        print("OpenAI client closed.")
+        
+      return FunctionResponse(message=Messages({"final_answer": final_answer}), failed=False)
+    
+    # Regular search request processing
     es_client = await check_async_elasticsearch_connection()
     if not es_client:
       return FunctionResponse(False, "Could not connect to Elasticsearch.")
@@ -1240,49 +1328,74 @@ async def handle_request(data: Message) -> FunctionResponse:
     retriever = RAGFusionRetriever(params, config, es_client, aclient_openai)
     user_query_input = params.get('question')
     
-    query_type = await retriever._classify_query_type(user_query_input)
-
-    if params.get('auto_chunk_sizing', True):  # Allow override with a flag
-        top_k_chunks = await retriever._determine_optimal_chunk_count(user_query_input, query_type)
-        print(f"Determined optimal chunk count: {top_k_chunks} for query type '{query_type}'")
-    else:
-        # Use provided value or default
-        top_k_chunks = int(params.get('top_k_chunks', 6))
+    # Get top_k_chunks from params or use default
+    top_k_chunks = int(params.get('top_k_chunks', 6))
     
     print(f"\n--- Running RAG Fusion Search for: '{user_query_input}' ---")
     search_results_dict = await retriever.search(
-        user_query=user_query_input, initial_candidate_pool_size=top_k_chunks, top_k_kg_entities=top_k_chunks, absolute_score_floor=0.3
+        user_query=user_query_input, 
+        initial_candidate_pool_size=top_k_chunks, 
+        top_k_kg_entities=top_k_chunks, 
+        absolute_score_floor=0.3
     )
     print("\n--- Search Results Dictionary (RAG Fusion: Chunks & KG Reranked if applicable) ---")
     
-    # print("\n--- LLM Formatted Context ---")
-    # print(search_results_dict.get("llm_formatted_context", "No formatted context generated."))
-
     if es_client and hasattr(es_client, 'close'):
       await es_client.close()
       print("Elasticsearch client closed.")
     if aclient_openai and hasattr(aclient_openai, "aclose"):
-        print('open ai clinet a close')
+        print('open ai client close')
         try:
           await aclient_openai.aclose()
           print("OpenAI client closed.")
         except Exception as e:
           print(f"Error closing OpenAI client: {e}")
-
-    return FunctionResponse(message=Messages(search_results_dict.get("llm_formatted_context", "No formatted context generated.")), failed=False) 
+    
+    if search_results_dict is None:
+        print("❌ Warning: search_results_dict is None")
+        return FunctionResponse(message=Messages("An error occurred during search. No results returned."), failed=True)
+    
+    # For direct queries, generate final answer automatically
+    if not params.get('skip_final_answer', False):
+      llm_formatted_context = search_results_dict.get("llm_formatted_context", "")
+      cited_files = []
+      if "refrences" in search_results_dict:
+        refs_text = search_results_dict["refrences"]
+        if refs_text and "**Sources:**" in refs_text:
+          sources_section = refs_text.split("**Sources:**")[1].split("\n\n")[0]
+          cited_files = [line.replace("- ", "").strip() for line in sources_section.strip().split("\n")]
+      
+      # Generate final answer
+      aclient_openai = await init_async_openai_client()
+      if aclient_openai:
+        retriever = RAGFusionRetriever(params, config, None, aclient_openai)
+        final_answer = await retriever._generate_final_answer(
+          original_query=user_query_input,
+          llm_formatted_context=llm_formatted_context,
+          cited_files=cited_files
+        )
+        
+        if aclient_openai and hasattr(aclient_openai, "aclose"):
+          await aclient_openai.aclose()
+          
+        return FunctionResponse(message=Messages({"final_answer": final_answer}), failed=False)
+    
+    # If skip_final_answer is true or if we couldn't generate one, return formatted context
+    return FunctionResponse(message=Messages(search_results_dict.get("llm_formatted_context", "No formatted context generated.")), failed=False)
+    
   except Exception as e:
     print(f"❌ Error during retrieval: {e}")
-    return FunctionResponse(message=Messages(e))
+    return FunctionResponse(message=Messages(str(e)), failed=True)
 
 def test_query():
     params = {
-        "question": "List the main characteristics of the vessel",
-        "top_k_chunks": 1,
+        "question": "giv me messbill from room no 106 and 107 in tabular form",
+        "top_k_chunks": 5,
         "enable_references_citations": True,
         "deep_research": False,
     }
     config = {
-        "index_name": "hydrostatic",
+        "index_name": "messbill-rowblaze",
     }
     message = Message(params=params, config=config)
     res = asyncio.run(handle_request(message))
@@ -1290,3 +1403,84 @@ def test_query():
 
 if __name__ == "__main__":
     test_query()
+
+
+
+# async def _extract_keywords_for_search(self, user_query: str, schema_chunks: str) -> List[str]:
+#         """
+#         Uses an LLM to extract the single most relevant keyword from the user query,
+#         using a fetched sample document for schema context.
+#         """
+        
+#         query_words = set(word.lower() for word in user_query.replace('.', ' ').replace(',', ' ').split())
+        
+#         system_prompt = """You are an expert at information retrieval and search query optimization. 
+# Your task is to analyze a user's query and extract the SINGLE most essential keyword FROM THE USER'S QUERY ITSELF.
+# The keyword you select MUST appear in the user's original query - this is a strict requirement."""
+            
+#         context_lines = []
+#         for fname, chunk in schema_chunks.items():
+#             context_lines.append(f"File: {fname}\nSample Chunk: {chunk}\n---")
+#         schema_context = "\n".join(context_lines)
+        
+#         user_prompt = """
+# I need you to extract the SINGLE most important keyword from the user's query below. This keyword will be used for database search filtering.
+
+# **IMPORTANT RULES:**
+# 1. You MUST select a keyword that appears VERBATIM in the user's query.
+# 2. DO NOT invent or suggest terms that aren't explicitly in the query.
+# 3. Ignore any terms that might be in the domain context but not in the query.
+# 4. Choose the most specific and relevant term from the query.
+
+# **Priority order for selection:**
+# 1. Specific named entities (names, IDs, unique terms)
+# 2. Domain-specific technical terms 
+# 3. Important nouns relevant to the question's subject
+# 4. Descriptive adjectives if they narrow the search
+# 5. Action verbs as a last resort
+
+# **Domain Context (For understanding ONLY - do not extract terms from here):**
+# {schema_context}
+
+# **User Query:** "{user_query}"
+
+# **Your Response:**
+# Return ONLY the single chosen keyword, with no explanations, quotes, or additional text.
+# """
+#         messages = [
+#             {"role": "system", "content": system_prompt},
+#             {"role": "user", "content": user_prompt.format(schema_context=schema_context, user_query=user_query)}
+#         ]
+        
+#         llm_response_content = ""
+#         print(f"Extracting keyword from query via LLM: '{user_query}'")
+#         llm_response_content = await self._call_openai_api(
+#             model_name=OPENAI_CHAT_MODEL, payload_messages=messages, max_tokens=50, temperature=0.0
+#         )
+
+#         # if not llm_response_content:
+#         #     print("⚠️ LLM returned no keywords. Falling back to using the original query.")
+#         #     return [user_query]
+        
+#         if not llm_response_content:
+#             print("⚠️ LLM returned no keywords. Falling back to using the most substantial noun in query.")
+#         # Choose the longest word as fallback (simple heuristic)
+#             words = [w for w in user_query.split() if len(w) > 3]
+#             fallback_keyword = max(words, key=len) if words else user_query
+#             return [fallback_keyword]
+
+#         keyword = llm_response_content.strip().lower()
+        
+#         if keyword in user_query.lower():
+#             print(f"✅ Extracted keyword: '{keyword}'")
+#             return [keyword]
+#         else:
+#             if keyword in query_words:
+#                 print(f"✅ Extracted keyword (word match): '{keyword}'")
+#                 return [keyword]
+#             else:
+#                 print(f"⚠️ Extracted keyword '{keyword}' not found in query. Using most specific noun instead.")
+#             # Get the longest noun from the query as fallback
+#                 nouns = [word for word in user_query.split() if len(word) > 3 and word.lower() not in ['list', 'what', 'when', 'where', 'how', 'who', 'which']]
+#                 best_keyword = max(nouns, key=len) if nouns else "vessel" if "vessel" in user_query.lower() else user_query.split()[-1]
+#                 return [best_keyword]
