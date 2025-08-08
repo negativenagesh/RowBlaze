@@ -10,7 +10,7 @@ import tempfile
 import json
 import time
 import sys
-from typing import List
+from typing import List, Tuple
 
 # Add project root to path to import modules
 project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
@@ -41,15 +41,19 @@ def initialize_session_state():
         st.session_state.index_name = "rowblaze"  # Default index
     if "processing" not in st.session_state:
         st.session_state.processing = False
-    if "file_queue" not in st.session_state:
-        st.session_state.file_queue = []  # Track files and their status
-    if "currently_processing" not in st.session_state:
-        st.session_state.currently_processing = False
+    if "is_processing_file" not in st.session_state:
+        st.session_state.is_processing_file = False  # Flag for file processing
+    if "upload_message" not in st.session_state:
+        st.session_state.upload_message = ""  # Upload status message
+    if "upload_success" not in st.session_state:
+        st.session_state.upload_success = False  # Success state for styling
     if "indexed_files" not in st.session_state:
         st.session_state.indexed_files = []  # Store fetched file names
     if "files_last_fetched" not in st.session_state:
         st.session_state.files_last_fetched = 0
-    
+    if "last_refresh_time" not in st.session_state:
+        st.session_state.last_refresh_time = time.time()
+
     # Create index if it doesn't exist and fetch files periodically
     if "index_checked" not in st.session_state:
         try:
@@ -59,17 +63,22 @@ def initialize_session_state():
             print(f"Error creating index: {e}")
             st.session_state.index_checked = False
     
-    # Fetch files if we haven't done so recently (every 30 seconds)
-    import time
-    current_time = time.time()
-    if current_time - st.session_state.files_last_fetched > 30:
+    # Only fetch files once at startup or when explicitly requested
+    if not st.session_state.indexed_files:  # Only fetch if we have no files
         try:
-            print("Fetching indexed files...")
+            print("Initial file list fetch...")
             st.session_state.indexed_files = asyncio.run(fetch_unique_files_from_es(st.session_state.index_name))
-            st.session_state.files_last_fetched = current_time
+            st.session_state.files_last_fetched = time.time()
             print(f"Fetched {len(st.session_state.indexed_files)} files")
         except Exception as e:
             print(f"Error fetching files: {e}")
+    
+    if "file_uploader_key" not in st.session_state:
+        st.session_state.file_uploader_key = "uploaded_file_0"
+
+    # Initialize the user input state
+    if "user_input" not in st.session_state:
+        st.session_state.user_input = ""
 
 def apply_custom_css():
     """Apply custom CSS for Grok-inspired UI."""
@@ -411,12 +420,11 @@ async def process_file_upload(uploaded_file):
         # Refresh the indexed files list after successful upload
         print("File uploaded successfully, refreshing file list...")
         # Add a small delay to ensure the document is indexed
-        import asyncio
         await asyncio.sleep(2)
         st.session_state.indexed_files = await fetch_unique_files_from_es(st.session_state.index_name)
         st.session_state.files_last_fetched = time.time()
         
-        return True, "Document successfully processed and indexed."
+        return True, "Successfully processed and indexed"
     except Exception as e:
         # Clean up temp file on error
         try:
@@ -424,7 +432,7 @@ async def process_file_upload(uploaded_file):
                 os.unlink(temp_path)
         except OSError:
             pass
-        return False, f"An error occurred during ingestion: {str(e)}"
+        return False, f"Processing failed: {str(e)}"
 
 def handle_chat_input():
     """Handle user chat input submission."""
@@ -460,102 +468,6 @@ def clear_chat():
     """Clear the chat history."""
     st.session_state.messages = []
 
-def handle_file_queue():
-    """Process files in the queue sequentially."""
-    print("Starting handle_file_queue")  # Debug print
-    try:
-        # Find the first pending file
-        pending_files = [f for f in st.session_state.file_queue if f["status"] == "pending"]
-        print(f"Found {len(pending_files)} pending files")  # Debug print
-        
-        if not pending_files:
-            print("No pending files to process")
-            return
-            
-        # Get the first pending file
-        for idx, file_info in enumerate(st.session_state.file_queue):
-            if file_info["status"] == "pending":
-                print(f"Processing file: {file_info['name']}")  # Debug print
-                
-                # Update status to processing
-                st.session_state.file_queue[idx]["status"] = "processing"
-                st.session_state.file_queue[idx]["message"] = "Processing..."
-                st.rerun()  # This line causes a rerun and stops execution here
-                
-                # The code below will only run after the rerun completes and function is called again
-                # Process the file
-                with st.spinner(f"Processing {file_info['name']}..."):
-                    success, message = asyncio.run(process_file_upload(file_info["file"]))
-                
-                # Update status based on result
-                st.session_state.file_queue[idx]["status"] = "completed" if success else "failed"
-                st.session_state.file_queue[idx]["message"] = message
-                
-                # Only process one file at a time, then exit
-                break
-    finally:
-        st.session_state.currently_processing = False
-
-def process_next_file_in_queue():
-    """Process the next pending file in the queue."""
-    # Find the first pending file
-    pending_files = [f for f in st.session_state.file_queue if f["status"] == "pending"]
-    
-    if not pending_files:
-        st.session_state.currently_processing = False
-        return
-        
-    # Get the first pending file
-    for idx, file_info in enumerate(st.session_state.file_queue):
-        if file_info["status"] == "pending":
-            # Update status to processing
-            st.session_state.file_queue[idx]["status"] = "processing"
-            st.session_state.file_queue[idx]["message"] = "Processing..."
-            
-            # Process the file directly in the main Streamlit context
-            try:
-                success, message = asyncio.run(process_file_upload(file_info["file"]))
-                
-                # Update the file status with results
-                st.session_state.file_queue[idx]["status"] = "completed" if success else "failed"
-                st.session_state.file_queue[idx]["message"] = message
-                
-                # Check if there are more files to process
-                next_pending = any(f["status"] == "pending" for f in st.session_state.file_queue)
-                if next_pending:
-                    # Force a rerun to process the next file
-                    st.rerun()
-                else:
-                    st.session_state.currently_processing = False
-                    
-            except Exception as e:
-                # Handle any errors
-                st.session_state.file_queue[idx]["status"] = "failed"
-                st.session_state.file_queue[idx]["message"] = f"Processing error: {str(e)}"
-                st.session_state.currently_processing = False
-            
-            # Only process one file at a time
-            break
-
-# Add this function to check for and apply file results
-def check_for_file_results():
-    """Check if any file processing results need to be applied"""
-    if "file_results" in st.session_state and st.session_state.file_results:
-        results = st.session_state.file_results.copy()
-        st.session_state.file_results = {}
-        
-        for idx, (success, message) in results.items():
-            if idx < len(st.session_state.file_queue):
-                st.session_state.file_queue[idx]["status"] = "completed" if success else "failed"
-                st.session_state.file_queue[idx]["message"] = message
-                
-        # Check if we need to process more files
-        has_pending = any(f["status"] == "pending" for f in st.session_state.file_queue)
-        if has_pending and not st.session_state.currently_processing:
-            st.session_state.currently_processing = True
-            process_next_file_in_queue()
-
-# Add this function to create the index if needed
 async def ensure_index_exists(index_name: str):
     """Ensure the Elasticsearch index exists, creating it if necessary."""
     try:
@@ -681,10 +593,24 @@ def main():
     with st.sidebar:
         st.title("Document Upload")
         
+        # Show file processing status
+        if st.session_state.upload_message:
+            message_style = "success" if st.session_state.upload_success else "error"
+            icon = "✅" if st.session_state.upload_success else "❌"
+            st.markdown(f"""
+            <div style="padding: 10px; border-radius: 5px; 
+                background-color: {'#1a3d1a' if st.session_state.upload_success else '#5c1c1c'}; 
+                border-left: 3px solid {'#4CAF50' if st.session_state.upload_success else '#f44336'};
+                margin-bottom: 15px;">
+                {icon} {st.session_state.upload_message}
+            </div>
+            """, unsafe_allow_html=True)
+        
         st.text_area("Document Description", 
                     placeholder="Enter a description of the document", 
                     key="doc_description",
-                    help="This description helps the system understand the document's content")
+                    help="This description helps the system understand the document's content",
+                    disabled=st.session_state.is_processing_file)
         
         # Set a clean, custom placeholder for the file uploader
         custom_css = """
@@ -695,108 +621,110 @@ def main():
             padding-top: 4px;
             padding-bottom: 4px;
         }
-        .file-status {
-            margin-top: 5px;
-            padding: 5px;
-            border-radius: 5px;
-        }
-        .status-pending {
-            background-color: #3a3a3a;
-            border-left: 3px solid #aaaaaa;
-        }
-        .status-processing {
-            background-color: #1f3b6a;
-            border-left: 3px solid #3a7be0;
-        }
-        .status-completed {
-            background-color: #1a3d1a;
-            border-left: 3px solid #4CAF50;
-        }
-        .status-failed {
-            background-color: #5c1c1c;
-            border-left: 3px solid #f44336;
-        }
         </style>
         """
         st.markdown(custom_css, unsafe_allow_html=True)
         
-        # Updated file uploader with hidden default text
-        uploaded_file = st.file_uploader(
-            "Upload Document", 
-            type=["pdf", "xlsx", "csv"], 
-            key="uploaded_file",
-            label_visibility="hidden"
-        )
-        
-        # Only display our custom message, without the limit text
-        if not uploaded_file:
+        # File uploader with appropriate message based on processing state
+        if st.session_state.is_processing_file:
             st.markdown("""
-            <div style="text-align: center; color: #999; font-size: 0.9em; padding: 5px 0;">
-            Drag and drop file here<br>
-            PDF, XLSX, CSV
+            <div style="text-align: center; color: #3a7be0; font-size: 0.9em; padding: 5px 0;
+                        animation: pulse 1.5s infinite; background-color: #1f3b6a; 
+                        border-radius: 5px; border: 1px solid #3a7be0;">
+                <span style="font-size: 16px;">🔄</span> Processing file...
             </div>
-            """, unsafe_allow_html=True)
-        
-        # Add file to queue when uploaded
-        if uploaded_file and not any(f["name"] == uploaded_file.name for f in st.session_state.file_queue):
-            new_file = {
-                "file": uploaded_file,
-                "name": uploaded_file.name,
-                "status": "pending",
-                "message": "Queued for processing"
+            <style>
+            @keyframes pulse {
+                0% { opacity: 0.7; }
+                50% { opacity: 1; }
+                100% { opacity: 0.7; }
             }
-            st.session_state.file_queue.append(new_file)
+            </style>
+            """, unsafe_allow_html=True)
             
-            # Auto-start processing if not currently processing
-            if not st.session_state.currently_processing:
-                st.session_state.currently_processing = True
-                process_next_file_in_queue()
+            # Show spinner during processing
+            with st.spinner("Processing document..."):
+                pass  # Visual indicator only
+        else:
+            # Updated file uploader with dynamic key
+            uploaded_file = st.file_uploader(
+                "Upload Document", 
+                type=["pdf", "xlsx", "csv"], 
+                key=st.session_state.file_uploader_key,  # Use dynamic key from session state
+                label_visibility="hidden"
+            )
+            
+            # Only display our custom message, without the limit text
+            if not uploaded_file:
+                st.markdown("""
+                <div style="text-align: center; color: #999; font-size: 0.9em; padding: 5px 0;">
+                Drag and drop file here<br>
+                PDF, XLSX, CSV
+                </div>
+                """, unsafe_allow_html=True)
+            
+            # Process file when uploaded
+            if uploaded_file:
+                # Check if file already exists in the index
+                if uploaded_file.name in st.session_state.indexed_files:
+                    st.session_state.upload_success = False
+                    st.session_state.upload_message = f"File '{uploaded_file.name}' already exists in the index."
+                    st.rerun()
+                else:
+                    st.session_state.is_processing_file = True
+                    st.session_state.upload_message = f"Processing {uploaded_file.name}..."
+                    st.session_state.upload_success = False
+                    st.rerun()  # Rerun to show processing state
         
-        # Display file queue in sidebar
-        if st.session_state.file_queue:
-            st.markdown("### Current Upload Queue")
-            for idx, file_info in enumerate(st.session_state.file_queue):
-                status_color = {
-                    "pending": "⚪",
-                    "processing": "🔄", 
-                    "completed": "✅",
-                    "failed": "❌"
-                }
-                status_icon = status_color.get(file_info["status"], "⚪")
-                st.markdown(f"{status_icon} {file_info['name']} - {file_info['message']}")
+        # Handle file processing after UI shows processing state
+        if st.session_state.is_processing_file and st.session_state.file_uploader_key in st.session_state:
+            # Get the file from session state using the current key
+            uploaded_file = st.session_state[st.session_state.file_uploader_key]
+            
+            # Process the file
+            if uploaded_file:
+                try:
+                    success, message = asyncio.run(process_file_upload(uploaded_file))
+                    
+                    # Update status based on result
+                    st.session_state.upload_success = success
+                    st.session_state.upload_message = f"{message}"
+                    
+                    # Reset file processing state
+                    st.session_state.is_processing_file = False
+                    
+                    # Only generate a new key for the file uploader to reset it
+                    st.session_state.file_uploader_key = f"uploaded_file_{int(time.time())}"
+                    
+                    # Refresh file list only after successful upload
+                    if success:
+                        st.session_state.indexed_files = asyncio.run(
+                            fetch_unique_files_from_es(st.session_state.index_name))
+                        st.session_state.files_last_fetched = time.time()
+        
+                    st.rerun()  # Show success/error message
+                except Exception as e:
+                    st.session_state.is_processing_file = False
+                    st.session_state.upload_success = False
+                    st.session_state.upload_message = f"Error: {str(e)}"
+                    st.rerun()
         
         # Add a refresh button for files
         col1, col2 = st.columns([3, 1])
         with col1:
             st.markdown("### Files in Index")
         with col2:
-            if st.button("🔄", help="Refresh file list"):
+            if st.button("🔄", help="Refresh file list", disabled=st.session_state.is_processing_file):
                 with st.spinner("Refreshing..."):
+                    # Only refresh files when button is clicked
                     st.session_state.indexed_files = asyncio.run(fetch_unique_files_from_es(st.session_state.index_name))
                     st.session_state.files_last_fetched = time.time()
+                    st.session_state.upload_message = "File list refreshed"
+                    st.session_state.upload_success = True
                     st.rerun()
-        
-        # Display all indexed files from Elasticsearch - MOVED INSIDE SIDEBAR
+
+        # Update file display section in the sidebar - simplified without delete buttons
         if st.session_state.indexed_files:
-            # Add CSS for a nice looking file list
-            st.markdown("""
-            <style>
-            .file-item {
-                padding: 8px 12px;
-                margin: 4px 0;
-                background-color: #2d2d2d;
-                border-radius: 6px;
-                border-left: 3px solid #3a7be0;
-                font-size: 0.9em;
-            }
-            .file-count {
-                color: #888;
-                font-size: 0.8em;
-                margin-top: 5px;
-            }
-            </style>
-            """, unsafe_allow_html=True)
-            
             for file_name in st.session_state.indexed_files:
                 st.markdown(f"""
                 <div class="file-item">
@@ -814,7 +742,7 @@ def main():
             st.markdown("*No files indexed yet*")
             st.markdown("Upload a document to get started!")
     
-    # Main area - REMOVED FILE DISPLAY CODE FROM HERE
+    # Main area
     display_header()
     
     st.markdown("<div class='chat-container'>", unsafe_allow_html=True)
