@@ -222,76 +222,73 @@ class RAGFusionRetriever:
                         # Get one chunk from this file
                         file_chunk_response = await self.es_client.search(
                             index=index_name,
-                            size=1,
+                            size=3,
                             query={
                                 "term": {
                                     "metadata.file_name.keyword": file_name
                                 }
                             },
+                            sort=[{"metadata.page_number": {"order": "asc"}}, {"metadata.chunk_index_in_page": {"order": "asc"}}],
                             _source_includes=["chunk_text", "metadata.file_name"]
                         )
                         
                         # Extract the chunk text
                         hits = file_chunk_response.get("hits", {}).get("hits", [])
-                        if hits:
-                            source = hits[0].get("_source", {})
-                            chunk_text = source.get("chunk_text", "")
-                            schema_chunks[file_name] = chunk_text
-                            print(f"Added sample chunk for file: {file_name} (length: {len(chunk_text)} chars)")
+                        chunk_texts = [hit.get("_source", {}).get("chunk_text", "") for hit in hits if hit.get("_source", {}).get("chunk_text")]                    
+                        if chunk_texts:
+                            schema_chunks[file_name] = chunk_texts
+                            print(f"Added {len(chunk_texts)} sample chunks for file: {file_name}")
                     except Exception as e:
-                        print(f"Error fetching chunk for file {file_name}: {e}")
+                        print(f"Error fetching chunks for file {file_name}: {e}")
                         continue
                     
             except Exception as e:
                 print(f"Error during file name aggregation: {e}")
                 # Continue to fallbacks if the aggregation approach fails
             
-            # First fallback: If no chunks found by file name, just get any documents
             if not schema_chunks:
                 print("No schema chunks found by file name aggregation, trying direct search...")
                 direct_search_response = await self.es_client.search(
                     index=index_name,
-                    size=20,  # Get a reasonable number of docs
+                    size=100,  # Get more docs to increase chance of multiple files
                     _source_includes=["chunk_text", "metadata.file_name"]
                 )
-                
-                seen_files = set()
+                seen_files = {}
                 for hit in direct_search_response.get('hits', {}).get('hits', []):
                     source = hit.get('_source', {})
                     metadata = source.get('metadata', {})
                     file_name = metadata.get('file_name', f"unknown_file_{len(seen_files)}")
-                    
-                    if file_name and file_name not in seen_files:
-                        chunk_text = source.get('chunk_text', '')
-                        if chunk_text:
-                            schema_chunks[file_name] = chunk_text
-                            seen_files.add(file_name)
-                            print(f"Fallback: Added sample chunk for file: {file_name}")
-                            
+                    chunk_text = source.get('chunk_text', '')
+                    if file_name and chunk_text:
+                        if file_name not in seen_files:
+                            seen_files[file_name] = []
+                        if len(seen_files[file_name]) < 3:
+                            seen_files[file_name].append(chunk_text)
+                for file_name, chunks in seen_files.items():
+                    schema_chunks[file_name] = chunks
+                    print(f"Fallback: Added {len(chunks)} sample chunks for file: {file_name}")
+
             # Final fallback: If still no chunks found, just get one document with ANY structure
             if not schema_chunks:
                 print("Second fallback: Getting any document from the index...")
                 try:
-                    # Simplest possible query to get just one document
                     any_doc_response = await self.es_client.search(
                         index=index_name,
-                        size=1,
+                        size=3,
                         query={"match_all": {}}
                     )
-                    
                     hits = any_doc_response.get('hits', {}).get('hits', [])
-                    if hits:
-                        source = hits[0].get('_source', {})
-                        # Look for text in common field names
+                    for idx, hit in enumerate(hits):
+                        source = hit.get('_source', {})
                         for text_field in ['chunk_text', 'text', 'content', 'body']:
                             if text_field in source:
-                                schema_chunks["generic_document"] = source.get(text_field)
+                                schema_chunks[f"generic_document_{idx+1}"] = [source.get(text_field)]
                                 print(f"Emergency fallback: Found content in '{text_field}' field")
                                 break
                 except Exception as e:
                     print(f"Final fallback query failed: {e}")
-                    
-            print(f"Successfully retrieved {len(schema_chunks)} schema chunks for keyword extraction")
+
+            print(f"Successfully retrieved schema chunks for {len(schema_chunks)} files for keyword extraction")
             return schema_chunks
                     
         except Exception as e:
@@ -960,15 +957,22 @@ class RAGFusionRetriever:
         using a fetched sample document for schema context.
         """
         
-        system_prompt = """You are an expert at information retrieval and search query optimization. Your task is to analyze a user's query and the provided data schema to extract the single most essential keyword required to perform a database search."""
+        system_prompt = (
+        "You are an expert at information retrieval and search query optimization. "
+        "Your task is to analyze a user's query and the provided data schema to extract the single most essential keyword required to perform a database search. "
+        "You are given up to 3 sample chunks for each unique file in the database, which represent the structure and content of the data."
+        )
         
         context_lines = []
-        for fname, chunk in schema_chunks.items():
-            context_lines.append(f"File: {fname}\nSample Chunk: {chunk}\n---")
+        for fname, chunks in schema_chunks.items():
+            context_lines.append(f"File: {fname}")
+            for i, chunk in enumerate(chunks):
+                context_lines.append(f"  Sample Chunk {i+1}: {chunk}")
+            context_lines.append("---")
         schema_context = "\n".join(context_lines)
         
         user_prompt = f"""
-Your goal is to extract the **single most important keyword** from a user's query. This keyword will be used to filter a database. Use the provided file chunk samples to understand the data's structure.
+Your goal is to extract the **single most important keyword** from a user's query. This keyword will be used to filter a database. Use the provided file chunk samples (up to 3 per file) to understand the data's structure and vocabulary.
 
 ---
 **File Chunk Samples**
@@ -976,11 +980,18 @@ Your goal is to extract the **single most important keyword** from a user's quer
 ---
 
 **Instructions & Logic**
-1. Analyze the user's query and the file chunk samples.
-2. Identify potential keywords in the query. These can be column names or specific values.
-3. From the potential keywords, select the **single most powerful filtering term**.
-4. **Priority Rule:** A specific value like a person's name, an ID, or a unique term is the highest priority because it narrows down the search the most. A general column header is a lower priority.
-5. Return **only the single best keyword as a plain string**, not in JSON or a list.
+1. Carefully analyze the user's query and the file chunk samples from each file.
+2. Identify all possible keywords or values in the query (e.g., column names, field names, page numbers, IDs, names, or unique terms).
+3. **Select the single most specific and rare value or keyword** that will best narrow down the search. 
+   - If the query contains a unique value (such as a page number, ID, or name) that appears in the schema samples, **choose that value**.
+   - If there is no such unique value, select the most relevant column or field name.
+   - Avoid generic terms that appear in many chunks/files unless no specific value is present.
+4. **Priority Order:** 
+   - Unique values (page numbers, IDs, names, dates, etc.) present in both the query and schema samples.
+   - Specific column or field names.
+   - Domain-specific technical terms.
+   - General terms only if nothing else is available.
+5. Return **only the single best keyword or value as a plain string**, not in JSON or a list.
 
 **Task**
 Query: "{user_query}"
@@ -994,7 +1005,7 @@ Output:
         llm_response_content = ""
         print(f"Extracting keyword from query via LLM: '{user_query}'")
         llm_response_content = await self._call_openai_api(
-            model_name=OPENAI_CHAT_MODEL, payload_messages=messages, max_tokens=200, temperature=0.0
+            model_name=OPENAI_CHAT_MODEL, payload_messages=messages, max_tokens=50, temperature=0.0
         )
 
         if not llm_response_content:
