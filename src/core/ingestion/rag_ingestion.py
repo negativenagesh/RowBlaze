@@ -884,6 +884,67 @@ class ChunkingEmbeddingPDFProcessor:
         }
         print(f"Pipeline complete for chunk (Page {page_num}, Index {chunk_idx_on_page}). ES action prepared.")
         return action
+    
+    async def process_pdf_structured(
+        self, data: bytes, file_name: str, doc_id: str, user_provided_document_summary: str
+    ) -> AsyncGenerator[Dict[str, Any], None]:
+        """
+        Processes a PDF file in 'structured' mode: each page is a chunk, no enrichment, no KG.
+        """
+        print(f"Processing PDF in structured mode: {file_name} (Doc ID: {doc_id})")
+        parser = PDFParser(self.aclient_openai, self)
+        try:
+            with pdfplumber.open(BytesIO(data)) as pdf:
+                if not pdf.pages:
+                    print("PDF has no pages. Aborting.")
+                    return
+
+                all_content_parts = []
+                for page_num, page in enumerate(pdf.pages, 1):
+                    page_text = page.extract_text() or ""
+                    tables = page.extract_tables()
+                    table_markdown = ""
+                    for table in tables:
+                        table_markdown += parser._convert_table_to_markdown(table)
+                    # Optionally, add image descriptions if needed
+                    chunk_text = (page_text.strip() + "\n" + table_markdown.strip()).strip()
+                    if not chunk_text:
+                        continue
+
+                    # Generate embedding for the chunk
+                    embedding_list = await self._generate_embeddings([chunk_text])
+                    embedding_vector = embedding_list[0] if embedding_list and embedding_list[0] else []
+
+                    if not embedding_vector:
+                        print(f"Skipping page {page_num} due to missing embedding.")
+                        continue
+
+                    es_doc_id = f"{doc_id}_p{page_num}_structured"
+                    doc_file_name = self.params.get('file_name', file_name)
+                    metadata_payload = {
+                        "file_name": doc_file_name,
+                        "doc_id": doc_id,
+                        "page_number": page_num,
+                        "chunk_index_in_page": 0,
+                        "document_summary": user_provided_document_summary,
+                        "entities": [],
+                        "relationships": []
+                    }
+                    index_name = self.params.get('index_name')
+                    action = {
+                        "_index": index_name,
+                        "_id": es_doc_id,
+                        "_source": {
+                            "chunk_text": chunk_text,
+                            "embedding": embedding_vector,
+                            "metadata": metadata_payload
+                        }
+                    }
+                    yield action
+        except Exception as e:
+            print(f"Error in structured PDF processing: {e}")
+            import traceback
+            traceback.print_exc()
 
     async def process_pdf(
         self, data: bytes, file_name: str, doc_id: str, user_provided_document_summary: str
@@ -1344,7 +1405,10 @@ async def example_run_file_processing(file_data: str | bytes, original_file_name
     try:
         doc_iterator = None
         if file_extension == ".pdf":
-            doc_iterator = processor.process_pdf(file_data, original_file_name, document_id,user_provided_doc_summary) 
+            if params.get("is_structured_pdf", False):
+                doc_iterator = processor.process_pdf_structured(file_data, original_file_name, document_id, user_provided_doc_summary)
+            else:
+                doc_iterator = processor.process_pdf(file_data, original_file_name, document_id, user_provided_doc_summary)
         elif file_extension == ".csv":
             doc_iterator = processor.process_csv_semantic_chunking(file_data, original_file_name, document_id, user_provided_doc_summary)
         elif file_extension == ".xlsx":
