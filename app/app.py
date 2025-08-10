@@ -394,6 +394,7 @@ async def process_file_upload(uploaded_file):
             "file_path": temp_path,
             "description": st.session_state.get("doc_description", f"Uploaded document: {uploaded_file.name}"),
             "is_ocr_pdf": st.session_state.get("is_ocr", False),
+            "is_structured_pdf": st.session_state.get("is_structured_pdf", False),
             "chunk_size": 1024,
             "chunk_overlap": 512,
         }
@@ -605,6 +606,13 @@ def main():
                 {icon} {st.session_state.upload_message}
             </div>
             """, unsafe_allow_html=True)
+        
+        is_structured_pdf = st.checkbox(
+            "Structured PDF",
+            value=False,
+            help="If checked, each PDF page will be indexed as a single chunk (no enrichment, no knowledge graph)."
+        )
+        st.session_state["is_structured_pdf"] = is_structured_pdf
         
         st.text_area("Document Description", 
                     placeholder="Enter a description of the document", 
