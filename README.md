@@ -45,7 +45,7 @@
 ### 1. Clone and star the Repository
 
 ```bash
-git clone https://github.com/yourusername/RowBlaze.git
+git clone https://github.com/negativenagesh/RowBlaze.git
 cd RowBlaze
 ```
 ---
