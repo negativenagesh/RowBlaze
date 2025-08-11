@@ -1,0 +1,14 @@
+
+Hope you enjoy your new logo, here are the people that
+made your beautiful logo happen :)
+font name: PlayfairDisplay-Black
+font link: https://fonts.google.com/specimen/Playfair+Display
+font author: Claus Eggers Sørensen
+font author site: https://forthehearts.net/
+
+
+icon designer: Icons By Alfredo
+icon designer link: /creator/AlfredoCreates/
+        
+{"bg-gradient-0":"#563F33","bg-gradient-1":"#A3A1A1","icon":"#ffffff","font":"#ffffff","slogan":"#ffffff"}
+      
