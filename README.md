@@ -1,6 +1,7 @@
 <div align='center'>
-<h1>RowBlaze</h1>  
-    RAG for structured and Unstructured data
+  <img src="RowBlaze-logo/cover.png" alt="RowBlaze Logo" width="800"/>
+  <br>
+  <b>RAG for Structured and Unstructured data</b>
 </div>
 
 <div align='center'>
