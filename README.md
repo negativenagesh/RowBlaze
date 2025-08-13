@@ -262,3 +262,7 @@ RowBlaze’s retrieval engine is designed to deliver accurate, explainable, and 
 
 5. Context Formatting:
 - Markdown formatting, citation management
+
+[Apache License 2.0](https://www.apache.org/licenses/LICENSE-2.0)
+
+
