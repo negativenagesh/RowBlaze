@@ -91,7 +91,7 @@ uv run src/core/retrieval/rag_retrieval.py
 #### For the App
 
 ```bash
-streamlit app/app.py
+streamlit run app/app.py
 ```
 ---
 ### 7. Notes
