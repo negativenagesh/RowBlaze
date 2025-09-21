@@ -23,6 +23,7 @@ PyMuPDF
 pymongo
 networkx
 openpyxl
+odfpy
 
 sentence-transformers
 nltk
