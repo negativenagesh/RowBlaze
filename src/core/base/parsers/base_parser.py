@@ -1,14 +1,31 @@
-# src/core/base/parsers/base_parser.py
-from abc import ABC, abstractmethod
-from typing import AsyncGenerator, Generic, TypeVar, Any # Add Any here
+import abc
+from typing import AsyncGenerator, Any, Dict, List, Tuple, Optional, TypeVar, Generic
 
-T = TypeVar("T")
+# Define a generic type parameter
+T = TypeVar('T')
 
-
-class AsyncParser(Generic[T], ABC):
-    """Base class for all async parsers."""
+class BaseParser:
+    """Base class for all document parsers."""
     
-    @abstractmethod
-    async def ingest(self, data: T, **kwargs) -> AsyncGenerator[Any, None]:
-        """Ingest data and yield processed chunks."""
+    def __init__(self, aclient_openai: Optional[Any] = None, server_type: str = None, processor_ref: Optional[Any] = None):
+        self.aclient_openai = aclient_openai
+        self.server_type = server_type
+        self.processor_ref = processor_ref
+    
+    @abc.abstractmethod
+    def ingest(self, data: Any) -> Any:
+        """Process the input data and return extracted content."""
+        pass
+
+class AsyncParser(Generic[T]):
+    """Base class for asynchronous document parsers with generic type parameter."""
+    
+    def __init__(self, aclient_openai: Optional[Any] = None, server_type: str = None, processor_ref: Optional[Any] = None):
+        self.aclient_openai = aclient_openai
+        self.server_type = server_type
+        self.processor_ref = processor_ref
+    
+    @abc.abstractmethod
+    async def ingest(self, data: T) -> AsyncGenerator[Tuple[str, int], None]:
+        """Process the input data and yield extracted content with page numbers."""
         pass

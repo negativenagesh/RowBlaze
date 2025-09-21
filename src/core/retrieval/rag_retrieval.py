@@ -1,7 +1,6 @@
 import os
 import asyncio
 import yaml
-import pymongo
 from pathlib import Path
 from typing import List, Dict, Any, Optional
 import traceback
@@ -9,7 +8,7 @@ import requests
 import time
 import httpx
 import sys
-import torch
+# import torch
 
 project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..', '..'))
 if project_root not in sys.path:
@@ -25,19 +24,26 @@ from openai import AsyncOpenAI
 from datetime import datetime, timezone
 from elasticsearch import AsyncElasticsearch
 from elasticsearch.exceptions import TransportError
-from sentence_transformers.cross_encoder import CrossEncoder
-from sentence_transformers import SentenceTransformer
-from transformers import AutoModel
-import nltk
+
+import numpy as np
+from dotenv import load_dotenv
+from openai import AsyncOpenAI
+from datetime import datetime, timezone
+from elasticsearch import AsyncElasticsearch
+from elasticsearch.exceptions import TransportError
+# from sentence_transformers.cross_encoder import CrossEncoder
+# from sentence_transformers import SentenceTransformer
+# from transformers import AutoModel
+# import nltk
 
 from sdk.response import FunctionResponse, Messages
 from sdk.message import Message
 
-try:
-    from sentence_transformers import SentenceTransformer
-    SENTENCE_TRANSFORMERS_INSTALLED = True
-except ImportError:
-    SENTENTCE_TRANSFORMERS_INSTALLED = False
+# try:
+#     from sentence_transformers import SentenceTransformer
+#     SENTENCE_TRANSFORMERS_INSTALLED = True
+# except ImportError:
+#     SENTENTCE_TRANSFORMERS_INSTALLED = False
 
 load_dotenv()
 
@@ -51,9 +57,16 @@ ELASTICSEARCH_API_KEY = os.getenv("ELASTICSEARCH_API_KEY")
 ES_USER = os.getenv("ELASTIC_USER")                    
 ES_PASS = os.getenv("ELASTIC_PASSWORD")
 
-PROVENCE_MODEL_ID = "naver/provence-reranker-debertav3-v1"
-LOCAL_PROVENCE_PATH = "./provence-model"
-LOCAL_NLTK_PATH = "./nltk_data"
+MODEL_TOKEN_LIMITS = {
+        "gpt-4o-mini-2024-07-18": 16384,
+        "gpt-4.1-nano-2025-04-14": 32768,
+        "gpt-5-nano-2025-08-07": 128000,
+        "gpt-oss-120b": 131072
+    }
+
+# PROVENCE_MODEL_ID = "naver/provence-reranker-debertav3-v1"
+# LOCAL_PROVENCE_PATH = "./provence-model"
+# LOCAL_NLTK_PATH = "./nltk_data"
 
 async def init_async_openai_client() -> Optional[AsyncOpenAI]:
   openai_api_key = os.getenv("OPEN_AI_KEY")
@@ -76,6 +89,12 @@ async def check_async_elasticsearch_connection() -> Optional[AsyncElasticsearch]
         es_client = AsyncElasticsearch(
                 ELASTICSEARCH_URL,
                 api_key=ELASTICSEARCH_API_KEY,
+                request_timeout=60,
+                retry_on_timeout=True
+            )
+    else:
+        es_client = AsyncElasticsearch(
+                hosts=[ELASTICSEARCH_URL],
                 request_timeout=60,
                 retry_on_timeout=True
             )
@@ -151,17 +170,16 @@ class RAGFusionRetriever:
         self.reranker = None
         self.provence_pruner = None
         self.deep_research = self.params.get('deep_research', False)
+        self.Server_type = os.getenv("SERVER_TYPE")
         self.embedding_model = None
         self.embedding_dims = OPENAI_EMBEDDING_DIMENSIONS
-        self.reranker = None
         
-        if self.deep_research:
-            try:
-                print(f"Deep research enabled. Initializing reranker from local path: {LOCAL_RERANKER_PATH}")
-                self.reranker = CrossEncoder(LOCAL_RERANKER_PATH)
-                print(f"CrossEncoder reranker initialized successfully from: {LOCAL_RERANKER_PATH}")
-            except Exception as e:
-                print(f"Failed to initialize CrossEncoder reranker from local path {LOCAL_RERANKER_PATH}: {e}")
+        # Rate limiting and error tracking
+        self.api_call_count = 0
+        self.last_api_call_time = 0
+        self.min_api_interval = 1.0  # Minimum seconds between API calls
+        self.consecutive_failures = 0
+        self.max_consecutive_failures = 3
 
     def _load_prompt_template(self, prompt_name: str) -> str:
         try:
@@ -182,6 +200,19 @@ class RAGFusionRetriever:
         except Exception as e:
             print(f"Error loading prompt '{prompt_name}': {e}")
             raise
+    
+    async def _enforce_rate_limit(self):
+        """Enforce minimum interval between API calls to prevent rate limiting."""
+        current_time = time.time()
+        time_since_last_call = current_time - self.last_api_call_time
+        
+        if time_since_last_call < self.min_api_interval:
+            sleep_time = self.min_api_interval - time_since_last_call
+            print(f"Rate limiting: waiting {sleep_time:.2f} seconds...")
+            await asyncio.sleep(sleep_time)
+        
+        self.last_api_call_time = time.time()
+        self.api_call_count += 1
     
     async def _fetch_schema_chunks_by_file(self) -> Dict[str, str]:
         """
@@ -294,7 +325,7 @@ class RAGFusionRetriever:
         except Exception as e:
             print(f"❌ Error fetching schema chunks by file: {e}")
             traceback.print_exc()
-            return {}  # Return empty dict as last resort if everything fails
+            return {}
     
     async def _call_openai_api(
         self,
@@ -303,46 +334,85 @@ class RAGFusionRetriever:
         max_tokens: int = 1024,
         temperature: float = 0.1
     ) -> str:
-        """A unified async method to call OpenAI text models with retry logic."""
+        """A unified async method to call OpenAI text models with improved retry logic."""
         if not self.aclient_openai:
             print("❌ OpenAI client not configured. Cannot make API call.")
             return ""
+        
+        model_to_use = self.params.get('model', model_name)
+    
+        # Use the provided max_tokens or get from params or use model-specific default
+        max_tokens_to_use = max_tokens
+        if max_tokens == 1024:  # If it's the default value
+            max_tokens_to_use = self.params.get('max_tokens', MODEL_TOKEN_LIMITS.get(model_to_use, 4096))
+        
+        # Check if we should skip due to consecutive failures
+        if self.consecutive_failures >= self.max_consecutive_failures:
+            print(f"⚠️ Skipping API call due to {self.consecutive_failures} consecutive failures")
+            return ""
 
-        print(f"*** openai messages: {payload_messages}")
-        max_retries = 3
-        base_delay_seconds = 10
+        # Enforce rate limiting
+        await self._enforce_rate_limit()
 
+        # Reduced retries and smarter delays to prevent rate limiting
+        max_retries = 2
+        base_delay_seconds = 5
+        
         for attempt in range(max_retries):
             try:
                 start_time = datetime.now(timezone.utc)
-                response = await self.aclient_openai.chat.completions.create(
-                    model=model_name,
-                    messages=payload_messages,
-                    max_tokens=max_tokens,
+                
+                # Use asyncio.wait_for for better timeout control
+                response = await asyncio.wait_for(
+                    self.aclient_openai.chat.completions.create(
+                        model=model_to_use,
+                        messages=payload_messages,
+                        max_tokens=max_tokens_to_use,
+                        temperature=temperature,
+                        timeout=90.0  # OpenAI client timeout
+                    ),
+                    timeout=120.0  # Overall operation timeout
                 )
                 
                 content = response.choices[0].message.content
+                
+                # if response.usage:
+                #     safe_fire_and_forget(calculatePriceByApi(self.config, self.params, response.usage, start_time))
 
                 if content:
-                    print(f"OpenAI API call successful. Preview: {content}")
+                    print(f"OpenAI API call successful. Preview: {content[:100].strip()}...")
+                    self.consecutive_failures = 0  # Reset failure count on success
                     return content
                 else:
                     print(f"OpenAI API returned empty content. Attempt {attempt + 1}/{max_retries}")
 
+            except asyncio.TimeoutError:
+                print(f"OpenAI API call timed out (Attempt {attempt + 1}/{max_retries})")
+                self.consecutive_failures += 1
             except Exception as e:
-                print(f"OpenAI API call failed (Attempt {attempt + 1}/{max_retries}): {e}")
+                error_str = str(e)
+                print(f"OpenAI API call failed (Attempt {attempt + 1}/{max_retries}): {error_str[:200]}")
+                self.consecutive_failures += 1
+                
+                # Handle rate limiting specifically
+                if "rate_limit" in error_str.lower() or "429" in error_str:
+                    print("Rate limit detected, extending delay...")
+                    base_delay_seconds = min(base_delay_seconds * 2, 30)  # Cap at 30 seconds
+                    self.min_api_interval = min(self.min_api_interval * 1.5, 5.0)  # Increase interval
             
             if attempt + 1 < max_retries:
-                delay = base_delay_seconds * (2 ** attempt)
-                print(f"Waiting for {delay} seconds before retrying...")
+                delay = base_delay_seconds * (1.5 ** attempt)
+                print(f"Waiting for {delay:.1f} seconds before retrying...")
                 await asyncio.sleep(delay)
 
         print("Max retries reached for OpenAI API call. Returning empty string.")
+        self.consecutive_failures += 1
         return ""
     
     async def _classify_query_type(self, query: str) -> str:
         """
         Uses an LLM to classify the user's query into a specific category.
+        Routes to NVIDIA API if SERVER_TYPE is 'ARMY'.
         """
         classification_prompt = f"""
         You are an expert query classifier. Your task is to classify the user's query into one of the following categories based on its intent. Respond with ONLY the category name.
@@ -360,14 +430,19 @@ class RAGFusionRetriever:
         valid_types = ['factual_lookup', 'summary_extraction', 'comparison', 'complex_analysis']
         
         query_type = ""
-        print(f"Classifying query via OpenAI: '{query}'")
-        messages = [{"role": "user", "content": classification_prompt}]
-        query_type = await self._call_openai_api(
-            model_name=OPENAI_CHAT_MODEL,
-            payload_messages=messages,
-            max_tokens=20,
-            temperature=0.0
-        )
+        if self.Server_type == 'ARMY':
+            print(f"ARMY mode: Classifying query via NVIDIA API: '{query}'")
+            messages = [{"role": "user", "content": classification_prompt}]
+            query_type = await self._call_nvidia_api(payload_messages=messages, max_tokens=20, temperature=0.0)
+        else: # Default to OpenAI
+            print(f"Classifying query via OpenAI: '{query}'")
+            messages = [{"role": "user", "content": classification_prompt}]
+            query_type = await self._call_openai_api(
+                model_name=OPENAI_CHAT_MODEL,
+                payload_messages=messages,
+                max_tokens=20,
+                temperature=0.0
+            )
 
         cleaned_query_type = query_type.strip().lower()
         if cleaned_query_type in valid_types:
@@ -442,26 +517,52 @@ class RAGFusionRetriever:
         ]
         
         llm_response_content = ""
-        
-        print(f"Generating {num_subqueries} subqueries via OpenAI for: '{original_query}'")
-        llm_response_content = await self._call_openai_api(
-            model_name=OPENAI_CHAT_MODEL,
-            payload_messages=messages,
-            max_tokens=500,
-            temperature=0.5
-        )
+        if self.Server_type == 'ARMY':
+            print(f"ARMY mode: Generating subqueries via NVIDIA for: '{original_query}'")
+            llm_response_content = await self._call_nvidia_api(
+                payload_messages=messages,
+                max_tokens=500,
+                temperature=0.5
+            )
+        else:
+            print(f"Generating {num_subqueries} subqueries via OpenAI for: '{original_query}'")
+            llm_response_content = await self._call_openai_api(
+                model_name=OPENAI_CHAT_MODEL,
+                payload_messages=messages,
+                max_tokens=500,
+                temperature=0.5
+            )
 
         if not llm_response_content:
             print("LLM returned empty content for subqueries.")
             return []
 
-        splitter = '\n\n'
+        # Parsing logic is slightly different for each API's typical output format
+        splitter = '\n' if self.Server_type == 'ARMY' else '\n\n'
         subqueries = [sq.strip() for sq in llm_response_content.split(splitter) if sq.strip()]
         print(f"✅ Successfully generated {len(subqueries)} subqueries: {subqueries}")
         return subqueries[:num_subqueries]
     
     async def _generate_embedding(self, texts: List[str]) -> List[List[float]]:
         if not texts: return []
+        
+        if self.Server_type == 'ARMY':
+            embedding_service_url = os.getenv("EMBEDDING_API_URL", "http://localhost:8000/embed")
+            try:
+                async with httpx.AsyncClient(timeout=120.0) as client:
+                    print(f"Generating embeddings for {len(texts)} texts via API: {embedding_service_url}")
+                    response = await client.post(embedding_service_url, json={"texts": texts})
+                    response.raise_for_status()
+                    
+                    result = response.json()
+                    print(f"✅ Successfully received {len(result.get('embeddings', []))} embeddings from service.")
+                    return result.get('embeddings', [[] for _ in texts])
+            except httpx.RequestError as e:
+                print(f"❌ Error calling embedding service: {e}")
+                return [[] for _ in texts]
+            except Exception as e:
+                print(f"❌ An unexpected error occurred during API call to embedding service: {e}")
+                return [[] for _ in texts]
         
         if not self.aclient_openai:
             print("OpenAI client not available. Cannot generate embeddings.")
@@ -477,7 +578,7 @@ class RAGFusionRetriever:
                 response = await self.aclient_openai.embeddings.create(
                     input=processed_batch_texts, 
                     model=OPENAI_EMBEDDING_MODEL, 
-                    dimensions=self.embedding_dims
+                    dimensions=self.embedding_dims  #changed
                 )
                 all_embeddings.extend([item.embedding for item in response.data])
             return all_embeddings
@@ -525,97 +626,133 @@ class RAGFusionRetriever:
             print(f"Elasticsearch semantic search error: {e}")
             return []
 
-    async def _structured_kg_search(self, subquery_embedding: List[float], top_k: int = 3,top_k_entities: int = 5) -> List[Dict[str, Any]]:
-        
+    async def _structured_kg_search(self, query_embedding: List[float], top_k: int, top_k_entities: int) -> List[Dict[str, Any]]:
         """
-        Performs a semantic search on nested entity description embeddings, then filters
-        for the top N entities within each returned document based on cosine similarity.
-        """
-        if not subquery_embedding:
-            print("Structured KG search skipped: No subquery embedding provided.")
-            return []
+        Search for entities in the knowledge graph using embeddings of their descriptions.
         
-        knn_query = {
-            "field": "metadata.entities.description_embedding",
-            "query_vector": subquery_embedding,
-            "k": top_k,
-            "num_candidates": top_k * 10,
-            "filter": {
-                "bool": {
-                    "must_not": [
-                        {"wildcard": {"metadata.file_name.keyword": "*.xlsx"}},
-                        {"wildcard": {"metadata.file_name.keyword": "*.csv"}}
+        Args:
+            query_embedding: Vector embedding for the query
+            top_k: Number of results to return
+            top_k_entities: Number of entities to return
+            
+        Returns:
+            List of matching entity information with scores
+        """
+        try:
+            index_name = self.config.get('index_name')
+                        
+            # Create the main query body
+            query_body = {
+                "size": top_k,
+                "_source": {
+                    "includes": [
+                        "metadata.entities",
+                        "metadata.file_name",
+                        "metadata.doc_id",
+                        "metadata.page_number",
+                        "metadata.chunk_index_in_page",
+                        "chunk_text"
                     ]
+                },
+                "query": {
+                    "nested": {
+                        "path": "metadata.entities",
+                        "score_mode": "max",
+                        "query": {
+                            "bool": {
+                                "must": [
+                                    {
+                                        "exists": {
+                                            "field": "metadata.entities.description_embedding"
+                                        }
+                                    },
+                                    {
+                                        "script_score": {
+                                            "query": {"match_all": {}},
+                                            "script": {
+                                                "source": "cosineSimilarity(params.query_vector, 'metadata.entities.description_embedding') + 1.0",
+                                                "params": {
+                                                    "query_vector": query_embedding
+                                                }
+                                            }
+                                        }
+                                    }
+                                ]
+                            }
+                        },
+                        "inner_hits": {
+                            "size": 3,
+                            "_source": ["name", "type", "description"]
+                        }
+                    }
                 }
             }
-        }
-        index_name = self.config.get('index_name')
-        print('index name in _structured_kg_search:-', index_name)
-        
-        # print(f"Performing structured KG search, KNN Query: {json.dumps(knn_query,indent=2)}")
-        try:
+            
+            # Execute search using the Elasticsearch client
             response = await self.es_client.search(
                 index=index_name,
-                knn=knn_query,
-                size=top_k,
-                _source=["chunk_text", "metadata"]
+                body=query_body
             )
             
-            final_results=[]
-            query_vec=np.array(subquery_embedding)
+            results = []
             
-            for hit in response.get('hits', {}).get('hits', []):
-                source = hit.get('_source', {})
-                metadata_from_hit = source.get('metadata', {})
-                all_entities = metadata_from_hit.get('entities', [])
-                all_relationships = metadata_from_hit.get('relationships', [])
-
-                if not all_entities:
-                    continue
-
-                # Score each entity in the document against the subquery embedding
-                scored_entities = []
-                for entity in all_entities:
-                    entity_embedding_list = entity.get("description_embedding")
-                    if entity_embedding_list:
-                        entity_vec = np.array(entity_embedding_list)
-                        # Calculate cosine similarity, handle potential norm=0
-                        norm_query = np.linalg.norm(query_vec)
-                        norm_entity = np.linalg.norm(entity_vec)
-                        if norm_query > 0 and norm_entity > 0:
-                            similarity = np.dot(query_vec, entity_vec) / (norm_query * norm_entity)
-                            scored_entities.append((similarity, entity))
-
-                # Sort entities by score and take top N
-                scored_entities.sort(key=lambda x: x[0], reverse=True)
-                top_entities = [entity for score, entity in scored_entities[:top_k_entities]]
-                top_entity_names = {entity['name'] for entity in top_entities if entity.get('name')}
-
-                # Filter relationships based on the top entities
-                filtered_relationships = []
-                if top_entity_names:
-                    for rel in all_relationships:
-                        if rel.get('source_entity') in top_entity_names or rel.get('target_entity') in top_entity_names:
-                            filtered_relationships.append(rel)
-
-                # If we found any top entities, create a result object for this document
-                if top_entities:
-                    final_results.append({
-                        "id": hit.get('_id'),
-                        "chunk_text": source.get('chunk_text'),
-                        "entities": top_entities,
-                        "relationships": filtered_relationships,
-                        "score": hit.get('_score'), # This is the parent document's score
-                        "file_name": metadata_from_hit.get('file_name'),
-                        "doc_id": metadata_from_hit.get('doc_id'),
-                        "page_number": metadata_from_hit.get('page_number'),
-                        "chunk_index_in_page": metadata_from_hit.get('chunk_index_in_page')
-                    })
+            if response["hits"]["total"]["value"] > 0:
+                print(f"Found {response['hits']['total']['value']} documents with entity embeddings in index.")
+                
+                # Process results
+                for hit in response["hits"]["hits"]:
+                    score = hit["_score"]
+                    source = hit["_source"]
+                    metadata = source.get("metadata", {})
+                    doc_id = metadata.get("doc_id", "unknown")
+                    file_name = metadata.get("file_name", "unknown")
+                    page_number = metadata.get("page_number")
+                    chunk_index_in_page = metadata.get("chunk_index_in_page")
+                    chunk_text = source.get("chunk_text", "")
+                    
+                    # Process inner hits (matching entities)
+                    if "inner_hits" in hit and "metadata.entities" in hit["inner_hits"]:
+                        entity_hits = hit["inner_hits"]["metadata.entities"]["hits"]["hits"]
+                        
+                        entities = []
+                        relationships = metadata.get("relationships", [])
+                        
+                        for entity_hit in entity_hits:
+                            entity = entity_hit["_source"]
+                            entities.append({
+                                "name": entity.get("name", ""),
+                                "type": entity.get("type", ""),
+                                "description": entity.get("description", "")
+                            })
+                        
+                        result_item = {
+                            "id": hit["_id"],
+                            "score": score,
+                            "doc_id": doc_id,
+                            "file_name": file_name,
+                            "page_number": page_number,
+                            "chunk_index_in_page": chunk_index_in_page,
+                            "chunk_text": chunk_text,
+                            "entities": entities,
+                            "relationships": relationships
+                        }
+                        
+                        results.append(result_item)
+            else:
+                print("No documents with entity embeddings found. Check your data processing pipeline.")
+                
+            # Sort by score (highest first)
+            results.sort(key=lambda x: x["score"], reverse=True)
             
-            print(f"Semantic KG search found and processed {len(final_results)} documents.")
+            # Return top-k results
+            final_results = results[:top_k_entities]
+            print(f"KG search returning {len(final_results)} results out of {len(results)} found.")
+            
             return final_results
-        except TransportError as e:
-            print(f"Elasticsearch semantic KG search error: {e}", exc_info=True)
+            
+        except Exception as e:
+            print(f"Error in structured KG search: {e}")
+            traceback.print_exc()
             return []
     
     async def _unified_rrf_search(self, query_text: str, query_embedding: List[float], top_k: int, top_k_entities: int, k_rrf: int = 60) -> List[Dict[str, Any]]:
@@ -729,7 +866,8 @@ class RAGFusionRetriever:
             for hit in response.get('hits', {}).get('hits', []):
                 source = hit.get('_source', {})
                 metadata = source.get('metadata', {})
-                results.append({
+                
+                result_item = {
                     "id": hit.get('_id'),
                     "chunk_text": source.get('chunk_text'),
                     "entities": metadata.get('entities', []),
@@ -739,11 +877,15 @@ class RAGFusionRetriever:
                     "doc_id": metadata.get('doc_id'),
                     "page_number": metadata.get('page_number'),
                     "chunk_index_in_page": metadata.get('chunk_index_in_page')
-                })
+                }
+                
+                results.append(result_item)
+                
+            print(f"KG keyword search found {len(results)} chunks.")
             return results
         except TransportError as e:
             print(f"Elasticsearch KG keyword search error: {e}")
-            return []
+        return []
 
     async def _rerank_documents(self, query: str, documents: List[Dict[str, Any]], doc_type: str, absolute_score_floor: float = 0.3) -> List[Dict[str, Any]]:
         if not documents:
@@ -1031,10 +1173,10 @@ Output:
         """
         # Default fallback values if analysis fails
         default_counts = {
-            'factual_lookup': 5,
-            'summary_extraction': 10,
-            'comparison': 25,
-            'complex_analysis': 30
+            'factual_lookup': 10,
+            'summary_extraction': 15,
+            'comparison': 20,
+            'complex_analysis': 20
         }
         
         try:
@@ -1121,8 +1263,10 @@ Output:
         except Exception as e:
             print(f"Error in optimal chunk count determination: {e}. Using default value.")
             return default_counts.get(query_type, 10)
-        
-    async def _generate_final_answer(self, original_query: str, llm_formatted_context: str, cited_files: List[str]) -> str:
+    
+    
+    
+    async def _generate_final_answer(self, original_query: str, llm_formatted_context: str, cited_files: List[str], model: str = None) -> str:
         """Generates the final answer by sending the context to the appropriate LLM."""
         print("\n--- Generating Final Answer based on Synthesized Context ---")
         
@@ -1139,12 +1283,15 @@ Output:
         {"role": "system", "content": SYSTEM_PROMPT_TEMPLATE},
         {"role": "user", "content": user_prompt}
     ]
-        max_tokens = 16000
+        model_to_use = model or self.params.get('model', OPENAI_CHAT_MODEL)
+        max_tokens = self.params.get('max_tokens', MODEL_TOKEN_LIMITS.get(model_to_use, 4096))
+        
+        print(f"Using model {model_to_use} with max token limit: {max_tokens}")
 
         final_answer = ""
-        print("Default mode: Routing final answer generation to OpenAI API.")
+        print(f"Routing final answer generation to {model_to_use} API with {max_tokens} max tokens.")
         final_answer = await self._call_openai_api(
-                model_name=OPENAI_CHAT_MODEL,
+                model_name=model_to_use,
                 payload_messages=messages,
                 max_tokens=max_tokens,
                 temperature=0.3
@@ -1168,51 +1315,75 @@ Output:
     ) -> Dict[str, Any]:
         print(f"Starting RAG Fusion search for user query: '{user_query}'")
 
-        schema_chunks = await self._fetch_schema_chunks_by_file()
-        query_type = await self._classify_query_type(user_query)
+        # Reset failure tracking for new search
+        self.consecutive_failures = 0
+        
+        try:
+            schema_chunks = await self._fetch_schema_chunks_by_file()
+        except Exception as e:
+            print(f"⚠️ Failed to fetch schema chunks: {e}")
+            schema_chunks = {}
+        
+        try:
+            query_type = await self._classify_query_type(user_query)
+        except Exception as e:
+            print(f"⚠️ Failed to classify query type: {e}. Defaulting to 'complex_analysis'")
+            query_type = 'complex_analysis'
         
         all_retrieved_chunks: Dict[str, Any] = {}
         
-        if query_type == 'factual_lookup':
-            print("-> Factual Lookup: Using single keyword search.")
-            search_keywords = await self._extract_keywords_for_search(user_query, schema_chunks)
-            
-            # For factual lookups, perform a precise keyword search
-            if search_keywords:
-                retrieved_chunks_list = await self._keyword_search_chunks(search_keywords[0], initial_candidate_pool_size)
-                for chunk in retrieved_chunks_list:
-                    all_retrieved_chunks[chunk['id']] = chunk
-        else:
-            print("-> Complex Query: Generating subqueries and running RRF for each.")
+        try:
             subqueries = await self._generate_subqueries(user_query, num_subqueries=num_subqueries)
-            subqueries.insert(0, user_query) # Also process the original query
-
-            for sq_text in subqueries:
-                print(f"\n--- Processing Complex Subquery: '{sq_text}' ---")
-                
+        except Exception as e:
+            print(f"⚠️ Failed to generate subqueries: {e}. Using original query only.")
+            subqueries = []
+        
+        print(f"Processing {len(subqueries)} subqueries)")
+        
+        for sq_text in subqueries:
+            print(f"\n--- Processing Subquery: '{sq_text}' ---")
+            
+            try:
                 query_embeddings = await self._generate_embedding([sq_text])
                 if not query_embeddings or not query_embeddings[0]:
+                    print(f"⚠️ Failed to generate embedding for subquery: '{sq_text}'")
+                    retrieved_chunks_list = await self._keyword_search_chunks(sq_text, initial_candidate_pool_size)
+                    for chunk in retrieved_chunks_list:
+                        all_retrieved_chunks[chunk['id']] = chunk
                     continue
+                    
                 query_embedding = query_embeddings[0]
 
-                # Extract the single most important keyword from the subquery
-                extracted_keywords = await self._extract_keywords_for_search(sq_text, schema_chunks)
-                if not extracted_keywords:
+                try:
+                    extracted_keywords = await self._extract_keywords_for_search(sq_text, schema_chunks)
+                    if not extracted_keywords:
+                        print(f"⚠️ No keywords extracted for subquery: '{sq_text}'. Using original text.")
+                        single_keyword = sq_text
+                    else:
+                        single_keyword = extracted_keywords[0]
+                except Exception as e:
+                    print(f"⚠️ Keyword extraction failed: {e}. Using original text.")
+                    single_keyword = sq_text
+
+                try:
+                    fused_chunks = await self._unified_rrf_search(
+                        query_text=single_keyword,
+                        query_embedding=query_embedding,
+                        top_k=initial_candidate_pool_size,
+                        top_k_entities=top_k_kg_entities
+                    )
+                    
+                    for chunk in fused_chunks:
+                        if chunk['id'] not in all_retrieved_chunks:
+                            all_retrieved_chunks[chunk['id']] = chunk
+                except Exception as e:
+                    print(f"⚠️ RRF search failed for subquery '{sq_text}': {e}")
                     continue
-                single_keyword = extracted_keywords[0]
-
-                # Perform RRF using the full text for vector and the single keyword for keyword search
-                fused_chunks = await self._unified_rrf_search(
-                    query_text=single_keyword,
-                    query_embedding=query_embedding,
-                    top_k=initial_candidate_pool_size,
-                    top_k_entities=top_k_kg_entities
-                )
-                
-                for chunk in fused_chunks:
-                    if chunk['id'] not in all_retrieved_chunks:
-                        all_retrieved_chunks[chunk['id']] = chunk
-
+                        
+            except Exception as e:
+                print(f"⚠️ Error processing subquery '{sq_text}': {e}")
+                continue
+        
         retrieved_chunks = list(all_retrieved_chunks.values())
         
         retrieved_kg_evidence_with_chunk_text = []
@@ -1220,7 +1391,7 @@ Output:
         if original_query_embedding and original_query_embedding[0]:
              retrieved_kg_evidence_with_chunk_text = await self._structured_kg_search(
                  original_query_embedding[0], initial_candidate_pool_size, top_k_kg_entities
-             )
+             ) 
                 
         if self.reranker and self.deep_research:
             print("Deep research is ON. Reranking and pruning will be applied to the final candidate pool.")
@@ -1237,12 +1408,6 @@ Output:
             doc_copy = doc.copy()
             doc_copy.pop("chunk_text", None)
             final_kg_evidence_for_output.append(doc_copy)
-            
-        processed_subquery_results = [{
-                    "sub_query_text": user_query,
-                    "reranked_chunks": retrieved_chunks,
-                    "retrieved_kg_data": final_kg_evidence_for_output
-                }]
         
         processed_subquery_results = [{
                     "sub_query_text": user_query,
@@ -1250,7 +1415,7 @@ Output:
                     "retrieved_kg_data": final_kg_evidence_for_output
                 }]
         
-        show_references = self.params.get('enable_references_citations', False)
+        show_references = self.params.get('enable_references_citations', True)
         citations_str = ''
         if show_references:
             cited_files = set()
@@ -1339,8 +1504,19 @@ async def handle_request(data: Message) -> FunctionResponse:
     retriever = RAGFusionRetriever(params, config, es_client, aclient_openai)
     user_query_input = params.get('question')
     
-    # Get top_k_chunks from params or use default
-    top_k_chunks = int(params.get('top_k_chunks', 6))
+    if params.get('auto_chunk_sizing', True):
+      try:
+        # Determine optimal chunk count based on query characteristics
+        top_k_chunks = await retriever._determine_optimal_chunk_count(user_query_input)
+        print(f"Using dynamically determined optimal chunk count: {top_k_chunks}")
+      except Exception as e:
+        # Fallback to param value or default if dynamic determination fails
+        print(f"Error determining optimal chunk count: {e}. Using default or parameter value.")
+        top_k_chunks = int(params.get('top_k_chunks', 6))
+    else:
+      # Use explicit parameter value if auto-sizing is disabled
+      top_k_chunks = int(params.get('top_k_chunks', 6))
+      print(f"Auto-sizing disabled. Using provided or default top_k_chunks: {top_k_chunks}")
     
     print(f"\n--- Running RAG Fusion Search for: '{user_query_input}' ---")
     search_results_dict = await retriever.search(
@@ -1376,14 +1552,18 @@ async def handle_request(data: Message) -> FunctionResponse:
           sources_section = refs_text.split("**Sources:**")[1].split("\n\n")[0]
           cited_files = [line.replace("- ", "").strip() for line in sources_section.strip().split("\n")]
       
-      # Generate final answer
+      model_to_use = params.get('model', OPENAI_CHAT_MODEL)
+      max_tokens = params.get('max_tokens', MODEL_TOKEN_LIMITS.get(model_to_use, 4096))
+        
+        # Generate final answer
       aclient_openai = await init_async_openai_client()
       if aclient_openai:
         retriever = RAGFusionRetriever(params, config, None, aclient_openai)
         final_answer = await retriever._generate_final_answer(
-          original_query=user_query_input,
-          llm_formatted_context=llm_formatted_context,
-          cited_files=cited_files
+            original_query=user_query_input,
+            llm_formatted_context=llm_formatted_context,
+            cited_files=cited_files,
+            model=model_to_use
         )
         
         if aclient_openai and hasattr(aclient_openai, "aclose"):
@@ -1414,84 +1594,3 @@ def test_query():
 
 if __name__ == "__main__":
     test_query()
-
-
-
-# async def _extract_keywords_for_search(self, user_query: str, schema_chunks: str) -> List[str]:
-#         """
-#         Uses an LLM to extract the single most relevant keyword from the user query,
-#         using a fetched sample document for schema context.
-#         """
-        
-#         query_words = set(word.lower() for word in user_query.replace('.', ' ').replace(',', ' ').split())
-        
-#         system_prompt = """You are an expert at information retrieval and search query optimization. 
-# Your task is to analyze a user's query and extract the SINGLE most essential keyword FROM THE USER'S QUERY ITSELF.
-# The keyword you select MUST appear in the user's original query - this is a strict requirement."""
-            
-#         context_lines = []
-#         for fname, chunk in schema_chunks.items():
-#             context_lines.append(f"File: {fname}\nSample Chunk: {chunk}\n---")
-#         schema_context = "\n".join(context_lines)
-        
-#         user_prompt = """
-# I need you to extract the SINGLE most important keyword from the user's query below. This keyword will be used for database search filtering.
-
-# **IMPORTANT RULES:**
-# 1. You MUST select a keyword that appears VERBATIM in the user's query.
-# 2. DO NOT invent or suggest terms that aren't explicitly in the query.
-# 3. Ignore any terms that might be in the domain context but not in the query.
-# 4. Choose the most specific and relevant term from the query.
-
-# **Priority order for selection:**
-# 1. Specific named entities (names, IDs, unique terms)
-# 2. Domain-specific technical terms 
-# 3. Important nouns relevant to the question's subject
-# 4. Descriptive adjectives if they narrow the search
-# 5. Action verbs as a last resort
-
-# **Domain Context (For understanding ONLY - do not extract terms from here):**
-# {schema_context}
-
-# **User Query:** "{user_query}"
-
-# **Your Response:**
-# Return ONLY the single chosen keyword, with no explanations, quotes, or additional text.
-# """
-#         messages = [
-#             {"role": "system", "content": system_prompt},
-#             {"role": "user", "content": user_prompt.format(schema_context=schema_context, user_query=user_query)}
-#         ]
-        
-#         llm_response_content = ""
-#         print(f"Extracting keyword from query via LLM: '{user_query}'")
-#         llm_response_content = await self._call_openai_api(
-#             model_name=OPENAI_CHAT_MODEL, payload_messages=messages, max_tokens=50, temperature=0.0
-#         )
-
-#         # if not llm_response_content:
-#         #     print("⚠️ LLM returned no keywords. Falling back to using the original query.")
-#         #     return [user_query]
-        
-#         if not llm_response_content:
-#             print("⚠️ LLM returned no keywords. Falling back to using the most substantial noun in query.")
-#         # Choose the longest word as fallback (simple heuristic)
-#             words = [w for w in user_query.split() if len(w) > 3]
-#             fallback_keyword = max(words, key=len) if words else user_query
-#             return [fallback_keyword]
-
-#         keyword = llm_response_content.strip().lower()
-        
-#         if keyword in user_query.lower():
-#             print(f"✅ Extracted keyword: '{keyword}'")
-#             return [keyword]
-#         else:
-#             if keyword in query_words:
-#                 print(f"✅ Extracted keyword (word match): '{keyword}'")
-#                 return [keyword]
-#             else:
-#                 print(f"⚠️ Extracted keyword '{keyword}' not found in query. Using most specific noun instead.")
-#             # Get the longest noun from the query as fallback
-#                 nouns = [word for word in user_query.split() if len(word) > 3 and word.lower() not in ['list', 'what', 'when', 'where', 'how', 'who', 'which']]
-#                 best_keyword = max(nouns, key=len) if nouns else "vessel" if "vessel" in user_query.lower() else user_query.split()[-1]
-#                 return [best_keyword]

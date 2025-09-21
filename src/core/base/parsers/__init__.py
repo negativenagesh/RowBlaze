@@ -1,5 +1,19 @@
+from .base_parser import BaseParser, AsyncParser
 from .csv_parser import CSVParser
+from .doc_parser import DOCParser
+from .docx_parser import DOCXParser
+from .odt_parser import ODTParser
+from .text_parser import TextParser
 from .xlsx_parser import XLSXParser, XLSXParserAdvanced
-from .base_parser import AsyncParser
 
-__all__ = ['CSVParser', 'XLSXParser', 'XLSXParserAdvanced', 'AsyncParser']
+__all__ = [
+    "AsyncParser",
+    "BaseParser",
+    "CSVParser",
+    "DOCParser", 
+    "DOCXParser",
+    "ODTParser",
+    "TextParser",
+    "XLSXParser",
+    "XLSXParserAdvanced"
+]
