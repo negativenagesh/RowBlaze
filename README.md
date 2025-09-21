@@ -91,7 +91,7 @@ uv run src/core/retrieval/rag_retrieval.py
 #### For the App
 
 ```bash
-streamlit app/app.py
+streamlit run app/app.py
 ```
 ---
 ### 7. Notes
@@ -262,3 +262,7 @@ RowBlaze’s retrieval engine is designed to deliver accurate, explainable, and 
 
 5. Context Formatting:
 - Markdown formatting, citation management
+
+[Apache License 2.0](https://www.apache.org/licenses/LICENSE-2.0)
+
+
