@@ -1,0 +1,194 @@
+graph_hierarchy:
+  template: |
+      You are an AI analyst specializing in extracting and organizing structured hierarchical relationships from unstructured data. Hierarchical relationships represent formal parent-child or level-based structures among entities that show "is-a" or "part-of" relationships.
+
+      Context Overview:
+      {collection_description}
+
+      Your Task:
+      Analyze the provided entity-relationship data and identify explicit hierarchical structures. Generate a comprehensive hierarchical representation as a single XML document. The hierarchy must follow this exact structure:
+
+      <hierarchy>
+          <name>A specific, descriptive name for this hierarchical structure</name>
+          <description>Brief explanation of what this hierarchy represents and its significance</description>
+          <root_type>The semantic type of the root entities (e.g., Organization, Category, Domain)</root_type>
+          <levels>
+              <level id="1" name="Top Level">
+                  <description>Description of what entities at this level represent</description>
+                  <nodes>
+                      <node id="unique_id">
+                          <name>Entity name</name>
+                          <children>
+                              <child_ref level="2" node_id="child_unique_id"/>
+                              <!-- Additional children as needed -->
+                          </children>
+                          <data_sources>[Reference to source data]</data_sources>
+                      </node>
+                      <!-- Additional nodes at this level -->
+                  </nodes>
+              </level>
+              <!-- Additional levels as needed -->
+          </levels>
+          <relationships>
+              <relationship type="part_of">
+                  <source node_id="child_id" level="2"/>
+                  <target node_id="parent_id" level="1"/>
+                  <description>Explanation of how this entity is part of its parent</description>
+                  <data_sources>[Reference to source data]</data_sources>
+              </relationship>
+              <!-- Additional relationships as needed -->
+          </relationships>
+      </hierarchy>
+
+      Important Guidelines:
+      1. Focus ONLY on explicit hierarchical relationships (is-a, part-of, belongs-to, reports-to).
+      2. Distinguish between arbitrary connections (non-hierarchical) and true parent-child relationships.
+      3. Ensure each entity appears in exactly one position in the hierarchy unless explicitly playing multiple roles.
+      4. Use consistent level numbering with the topmost level as 1.
+      5. Each entity should have a unique ID within its level.
+      6. Include only relationships that are clearly supported by the data.
+      7. Do not fabricate hierarchical connections that aren't explicitly stated.
+
+      Data Reference Format:
+      Include data references like this:
+      "[Data: <dataset name> (record ids)]"
+      Use no more than 5 record IDs per reference. Add "+more" to indicate additional records.
+
+      Example Input:
+      -----------
+      Text:
+
+      Entity: TechCorp
+      descriptions:
+        101,TechCorp is a multinational technology company.
+      relationships:
+        201,TechCorp,Engineering Division,TechCorp's Engineering Division is responsible for product development.
+        202,TechCorp,Sales Division,TechCorp's Sales Division handles global sales operations.
+        203,Engineering Division,Frontend Team,The Frontend Team is part of the Engineering Division.
+        204,Engineering Division,Backend Team,The Backend Team is part of the Engineering Division.
+        205,Sales Division,North America Team,The North America Team is part of the Sales Division.
+        206,Sales Division,Europe Team,The Europe Team is part of the Sales Division.
+        207,Frontend Team,UI Group,The UI Group is a subteam within Frontend Team.
+        208,Frontend Team,UX Group,The UX Group is a subteam within Frontend Team.
+        209,TechCorp,Google,TechCorp partners with Google on cloud services.
+
+      Entity: Engineering Division
+      descriptions:
+        102,Engineering Division is responsible for all technical development.
+
+      Entity: Sales Division
+      descriptions:
+        103,Sales Division manages customer relationships and sales processes.
+
+      Entity: Frontend Team
+      descriptions:
+        104,Frontend Team develops user interfaces and experiences.
+
+      Entity: Backend Team
+      descriptions:
+        105,Backend Team develops server-side applications and databases.
+
+      Example Output:
+      <hierarchy>
+          <name>TechCorp Organizational Structure</name>
+          <description>The formal organizational hierarchy of TechCorp showing divisions, teams, and groups</description>
+          <root_type>Organization</root_type>
+          <levels>
+              <level id="1" name="Company">
+                  <description>The top-level corporate entity</description>
+                  <nodes>
+                      <node id="tc1">
+                          <name>TechCorp</name>
+                          <children>
+                              <child_ref level="2" node_id="ed1"/>
+                              <child_ref level="2" node_id="sd1"/>
+                          </children>
+                          <data_sources>[Data: descriptions (101)]</data_sources>
+                      </node>
+                  </nodes>
+              </level>
+              <level id="2" name="Division">
+                  <description>Major business units within the company</description>
+                  <nodes>
+                      <node id="ed1">
+                          <name>Engineering Division</name>
+                          <children>
+                              <child_ref level="3" node_id="ft1"/>
+                              <child_ref level="3" node_id="bt1"/>
+                          </children>
+                          <data_sources>[Data: descriptions (102); relationships (201)]</data_sources>
+                      </node>
+                      <node id="sd1">
+                          <name>Sales Division</name>
+                          <children>
+                              <child_ref level="3" node_id="nat1"/>
+                              <child_ref level="3" node_id="et1"/>
+                          </children>
+                          <data_sources>[Data: descriptions (103); relationships (202)]</data_sources>
+                      </node>
+                  </nodes>
+              </level>
+              <level id="3" name="Team">
+                  <description>Functional teams within divisions</description>
+                  <nodes>
+                      <node id="ft1">
+                          <name>Frontend Team</name>
+                          <children>
+                              <child_ref level="4" node_id="uig1"/>
+                              <child_ref level="4" node_id="uxg1"/>
+                          </children>
+                          <data_sources>[Data: descriptions (104); relationships (203)]</data_sources>
+                      </node>
+                      <node id="bt1">
+                          <name>Backend Team</name>
+                          <data_sources>[Data: descriptions (105); relationships (204)]</data_sources>
+                      </node>
+                      <node id="nat1">
+                          <name>North America Team</name>
+                          <data_sources>[Data: relationships (205)]</data_sources>
+                      </node>
+                      <node id="et1">
+                          <name>Europe Team</name>
+                          <data_sources>[Data: relationships (206)]</data_sources>
+                      </node>
+                  </nodes>
+              </level>
+              <level id="4" name="Group">
+                  <description>Specialized working groups within teams</description>
+                  <nodes>
+                      <node id="uig1">
+                          <name>UI Group</name>
+                          <data_sources>[Data: relationships (207)]</data_sources>
+                      </node>
+                      <node id="uxg1">
+                          <name>UX Group</name>
+                          <data_sources>[Data: relationships (208)]</data_sources>
+                      </node>
+                  </nodes>
+              </level>
+          </levels>
+          <relationships>
+              <relationship type="part_of">
+                  <source node_id="ed1" level="2"/>
+                  <target node_id="tc1" level="1"/>
+                  <description>Engineering Division is part of TechCorp</description>
+                  <data_sources>[Data: relationships (201)]</data_sources>
+              </relationship>
+              <relationship type="part_of">
+                  <source node_id="sd1" level="2"/>
+                  <target node_id="tc1" level="1"/>
+                  <description>Sales Division is part of TechCorp</description>
+                  <data_sources>[Data: relationships (202)]</data_sources>
+              </relationship>
+              <!-- Additional relationships omitted for brevity -->
+          </relationships>
+      </hierarchy>
+
+      Note: Non-hierarchical relationships like "TechCorp partners with Google" (relationship 209) are excluded as they don't represent parent-child or level-based structures.
+
+      Entity Data:
+      {input_text}
+
+  input_types:
+    collection_description: str
+    input_text: str
