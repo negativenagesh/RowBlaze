@@ -147,10 +147,10 @@ def apply_custom_css():
             letter-spacing: 0.3px;
         }
         
-        /* Chat message styling */
+        /* Chat message styling - UPDATED */
         .user-message {
-            background-color: #3a7be0;
-            color: white;
+            background-color: #2d2d2d; /* Changed from #3a7be0 to match bot message color */
+            color: #fafafa; /* Changed from white to match bot text color */
             border-radius: 18px 18px 0 18px;
             padding: 12px 18px;
             margin: 10px 0;
@@ -537,20 +537,20 @@ def main():
         else:
             # Updated file uploader with dynamic key
             uploaded_file = st.file_uploader(
-                "Upload Document", 
-                type=["pdf", "xlsx", "csv"], 
-                key=st.session_state.file_uploader_key,  # Use dynamic key from session state
+                "Upload File", 
+                type=["pdf", "doc", "docx", "txt", "odt", "xlsx", "csv", "jpg", "jpeg", "png", "gif", "bmp", "webp", "heic", "tiff", "tif"], 
+                key=st.session_state.file_uploader_key,
                 label_visibility="hidden"
             )
-            
-            # Only display our custom message, without the limit text
-            if not uploaded_file:
-                st.markdown("""
-                <div style="text-align: center; color: #999; font-size: 0.9em; padding: 5px 0;">
-                Drag and drop file here<br>
-                PDF, DOCX, DOC, TXT, ODT, XLSX, CSV
-                </div>
-                """, unsafe_allow_html=True)
+
+            # Then update the message below the uploader (around line 387)
+            # if not uploaded_file:
+            #     st.markdown("""
+            #     <div style="text-align: center; color: #999; font-size: 0.9em; padding: 5px 0;">
+            #     Drag and drop file here<br>
+            #     PDF, DOCX, DOC, TXT, ODT, XLSX, CSV, JPG, PNG, GIF, BMP, WEBP, HEIC, TIFF
+            #     </div>
+            #     """, unsafe_allow_html=True)
             
             # Process file when uploaded
             if uploaded_file:
