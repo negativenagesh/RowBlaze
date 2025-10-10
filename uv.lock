@@ -811,6 +811,15 @@ wheels = [
 ]
 
 [[package]]
+name = "markdown"
+version = "3.9"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/8d/37/02347f6d6d8279247a5837082ebc26fc0d5aaeaf75aa013fcbb433c777ab/markdown-3.9.tar.gz", hash = "sha256:d2900fe1782bd33bdbbd56859defef70c2e78fc46668f8eb9df3128138f2cb6a", size = 364585, upload-time = "2025-09-04T20:25:22.885Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/70/ae/44c4a6a4cbb496d93c6257954260fe3a6e91b7bed2240e5dad2a717f5111/markdown-3.9-py3-none-any.whl", hash = "sha256:9f4d91ed810864ea88a6f32c07ba8bee1346c0cc1f6b1f9f6c822f2a9667d280", size = 107441, upload-time = "2025-09-04T20:25:21.784Z" },
+]
+
+[[package]]
 name = "markupsafe"
 version = "3.0.2"
 source = { registry = "https://pypi.org/simple" }
@@ -1492,6 +1501,15 @@ wheels = [
 ]
 
 [[package]]
+name = "python-multipart"
+version = "0.0.20"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/f3/87/f44d7c9f274c7ee665a29b885ec97089ec5dc034c7f3fafa03da9e39a09e/python_multipart-0.0.20.tar.gz", hash = "sha256:8dd0cab45b8e23064ae09147625994d090fa46f5b0d1e13af944c331a7fa9d13", size = 37158, upload-time = "2024-12-16T19:45:46.972Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/45/58/38b5afbc1a800eeea951b9285d3912613f2603bdf897a4ab0f4bd7f405fc/python_multipart-0.0.20-py3-none-any.whl", hash = "sha256:8a62d3a8335e06589fe01f2a3e178cdcc632f3fbe0d492ad9ee0ec35aab1f104", size = 24546, upload-time = "2024-12-16T19:45:44.423Z" },
+]
+
+[[package]]
 name = "pytz"
 version = "2025.2"
 source = { registry = "https://pypi.org/simple" }
@@ -1677,7 +1695,9 @@ dependencies = [
     { name = "bson" },
     { name = "dotenv" },
     { name = "elasticsearch" },
+    { name = "httpx" },
     { name = "langchain" },
+    { name = "markdown" },
     { name = "mistralai" },
     { name = "networkx" },
     { name = "odfpy" },
@@ -1689,6 +1709,7 @@ dependencies = [
     { name = "pymupdf" },
     { name = "pypandoc" },
     { name = "python-docx" },
+    { name = "python-multipart" },
     { name = "streamlit" },
     { name = "tiktoken" },
     { name = "watchdog" },
@@ -1700,7 +1721,9 @@ requires-dist = [
     { name = "bson", specifier = ">=0.5.10" },
     { name = "dotenv", specifier = ">=0.9.9" },
     { name = "elasticsearch", specifier = ">=9.1.1" },
+    { name = "httpx", specifier = ">=0.28.1" },
     { name = "langchain", specifier = ">=0.3.27" },
+    { name = "markdown", specifier = ">=3.9" },
     { name = "mistralai", specifier = ">=1.9.10" },
     { name = "networkx", specifier = ">=3.5" },
     { name = "odfpy", specifier = ">=1.4.1" },
@@ -1712,6 +1735,7 @@ requires-dist = [
     { name = "pymupdf", specifier = ">=1.26.4" },
     { name = "pypandoc", specifier = ">=1.15" },
     { name = "python-docx", specifier = ">=1.2.0" },
+    { name = "python-multipart", specifier = ">=0.0.20" },
     { name = "streamlit", specifier = ">=1.48.0" },
     { name = "tiktoken", specifier = ">=0.11.0" },
     { name = "watchdog", specifier = ">=6.0.0" },
