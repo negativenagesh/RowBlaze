@@ -46,6 +46,7 @@ from src.core.base.parsers.odt_parser import ODTParser
 from src.core.base.parsers.text_parser import TextParser
 from src.core.base.parsers.csv_parser import CSVParser
 from src.core.base.parsers.xlsx_parser import XLSXParser
+from src.core.base.parsers.image_parser import ImageParser
 
 try:
     from pdf2image import convert_from_bytes
@@ -691,6 +692,12 @@ class ChunkingEmbeddingPDFProcessor:
             return hierarchies
 
         try:
+            
+            if cleaned_xml.strip().startswith("<hierarchy"):
+            # Wrap in a root element
+                cleaned_xml = f"<hierarchies>{cleaned_xml}</hierarchies>"
+                print("Wrapped direct <hierarchy> tag in <hierarchies> root element")
+            
             root = ET.fromstring(cleaned_xml)
             
             for hierarchy_elem in root.findall(".//hierarchy"):
@@ -1917,6 +1924,78 @@ class ChunkingEmbeddingPDFProcessor:
         
         print(f"Finished processing for DOCX file '{file_name}'. Successfully processed and yielded {num_successfully_processed}/{len(all_raw_chunks_with_meta)} chunks.")
 
+    async def process_image(
+        self, data: bytes, file_name: str, doc_id: str, user_provided_document_summary: str
+    ) -> AsyncGenerator[Dict[str, Any], None]:
+        """
+        Process an image file and generate a text description using vision models.
+        Store the description in Elasticsearch with embedding.
+        """
+        print(f"Processing image: {file_name} (Doc ID: {doc_id})")
+        
+        try:
+            # Initialize the image parser with the same openai client and server type
+            image_parser = ImageParser(self.aclient_openai, self.Server_type, self)
+            
+            # Process the image and get its description
+            description = ""
+            async for text_part in image_parser.ingest(data, filename=file_name):
+                description += text_part
+            
+            if not description or description == "Could not generate description for this image.":
+                print(f"No description generated for image '{file_name}'. Using fallback.")
+                description = f"Image file: {file_name}"
+            
+            # Create a chunk with the image description
+            chunk_text = f"[Image: {file_name}]\n\n{description}"
+            
+            # Generate embedding for the chunk text
+            embedding_list = await self._generate_embeddings([chunk_text])
+            embedding_vector = embedding_list[0] if embedding_list and embedding_list[0] else []
+            
+            if not embedding_vector:
+                print(f"Failed to generate embedding for image '{file_name}'. Skipping.")
+                return
+            
+            # Use the image description as its own summary if no user summary provided
+            doc_summary = user_provided_document_summary or f"Image description: {description[:100]}..."
+            
+            # Create the Elasticsearch document
+            es_doc_id = f"{doc_id}_img"
+            doc_file_name = self.params.get('file_name', file_name)
+            
+            # Prepare metadata payload
+            metadata_payload = {
+                "file_name": doc_file_name,
+                "doc_id": doc_id,
+                "page_number": 1,  # Images are treated as single page
+                "chunk_index_in_page": 0,
+                "document_summary": doc_summary,
+                "entities": [],      # No entities for images by default
+                "relationships": [], # No relationships for images by default
+                "hierarchies": []    # No hierarchies for images by default
+            }
+            
+            index_name = self.params.get('index_name')
+            
+            # Create the Elasticsearch action
+            action = {
+                "_index": index_name,
+                "_id": es_doc_id,
+                "_source": {
+                    "chunk_text": chunk_text,
+                    "embedding": embedding_vector,
+                    "metadata": metadata_payload
+                }
+            }
+            
+            print(f"Processing complete for image '{file_name}'. ES action prepared.")
+            yield action
+            
+        except Exception as e:
+            print(f"Error processing image '{file_name}': {e}")
+            traceback.print_exc()
+    
     async def process_odt(
         self, data: bytes, file_name: str, doc_id: str, user_provided_document_summary: str
     ) -> AsyncGenerator[Dict[str, Any], None]:
@@ -2492,6 +2571,10 @@ async def example_run_file_processing(file_data: str | bytes, original_file_name
             doc_iterator = processor.process_doc(file_data, original_file_name, document_id, user_provided_doc_summary)
         elif file_extension == ".docx":
             doc_iterator = processor.process_docx(file_data, original_file_name, document_id, user_provided_doc_summary)
+        if file_extension in [".jpg", ".jpeg", ".png", ".gif", ".bmp", ".webp", ".heic", ".tiff", ".tif"]:
+            doc_iterator = processor.process_image(file_data, original_file_name, document_id, user_provided_doc_summary)
+        elif file_extension == ".pdf":
+            doc_iterator = processor.process_pdf(file_data, original_file_name, document_id, user_provided_doc_summary)
         elif file_extension == ".odt":
             doc_iterator = processor.process_odt(file_data, original_file_name, document_id, user_provided_doc_summary)
         elif file_extension == ".txt":
@@ -2501,7 +2584,7 @@ async def example_run_file_processing(file_data: str | bytes, original_file_name
         elif file_extension == ".xlsx":
             doc_iterator = processor.process_xlsx_semantic_chunking(file_data, original_file_name, document_id, user_provided_doc_summary)
         else:
-            print(f"Unsupported file type: '{file_extension}'. Only .pdf, .doc, .docx, .csv and .txt are supported.")
+            print(f"Unsupported file type: '{file_extension}'. Supported types: .pdf, .doc, .docx, .csv, .txt, .jpg, .jpeg, .png, .gif, .bmp, .webp, .heic, .tiff, .tif")
             return None
 
         if doc_iterator:
