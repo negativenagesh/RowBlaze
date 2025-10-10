@@ -1,30 +1,21 @@
-# rag_chatbot.py - Streamlit RAG chatbot with Grok-inspired UI
-#
-# To run: streamlit run rag_chatbot.py
-
 import os
-import asyncio
+import requests
 import streamlit as st
 from pathlib import Path
-import tempfile
 import json
 import time
 import sys
 from typing import List, Tuple
+import httpx
+import asyncio
 
-# Add project root to path to import modules
 project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
 if project_root not in sys.path:
     sys.path.insert(0, project_root)
 
-# Import necessary modules
-from src.core.retrieval.rag_retrieval import handle_request as retrieval_handle_request
-from src.core.ingestion.rag_ingestion import handle_request as ingestion_handle_request
-from src.core.retrieval.rag_retrieval import check_async_elasticsearch_connection
-from sdk.message import Message
-from sdk.response import FunctionResponse, Messages
+# API settings
+API_URL = os.getenv("ROWBLAZE_API_URL", "http://localhost:8000/api")
 
-# Set page configuration
 st.set_page_config(
     page_title="RowBlaze",
     page_icon="🗿",
@@ -32,13 +23,14 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# Define helper functions for UI rendering and chat logic
 def initialize_session_state():
     """Initialize session state variables for chat history and settings."""
     if "messages" not in st.session_state:
         st.session_state.messages = []
     if "index_name" not in st.session_state:
         st.session_state.index_name = "rowblaze"  # Default index
+    if "selected_model" not in st.session_state:
+        st.session_state.selected_model = os.getenv("OPENAI_MODEL", "gpt-4o-mini-2024-07-18")
     if "processing" not in st.session_state:
         st.session_state.processing = False
     if "is_processing_file" not in st.session_state:
@@ -57,19 +49,24 @@ def initialize_session_state():
     # Create index if it doesn't exist and fetch files periodically
     if "index_checked" not in st.session_state:
         try:
-            asyncio.run(ensure_index_exists(st.session_state.index_name))
-            st.session_state.index_checked = True
+            response = requests.get(f"{API_URL}/health")
+            if response.status_code == 200:
+                st.session_state.index_checked = True
+            else:
+                st.session_state.index_checked = False
         except Exception as e:
-            print(f"Error creating index: {e}")
+            print(f"Error checking API health: {e}")
             st.session_state.index_checked = False
     
     # Only fetch files once at startup or when explicitly requested
     if not st.session_state.indexed_files:  # Only fetch if we have no files
         try:
             print("Initial file list fetch...")
-            st.session_state.indexed_files = asyncio.run(fetch_unique_files_from_es(st.session_state.index_name))
-            st.session_state.files_last_fetched = time.time()
-            print(f"Fetched {len(st.session_state.indexed_files)} files")
+            response = requests.get(f"{API_URL}/files/{st.session_state.index_name}")
+            if response.status_code == 200:
+                st.session_state.indexed_files = response.json()
+                st.session_state.files_last_fetched = time.time()
+                print(f"Fetched {len(st.session_state.indexed_files)} files")
         except Exception as e:
             print(f"Error fetching files: {e}")
     
@@ -80,8 +77,10 @@ def initialize_session_state():
     if "user_input" not in st.session_state:
         st.session_state.user_input = ""
 
+# Add your existing CSS styling function here
 def apply_custom_css():
     """Apply custom CSS for Grok-inspired UI."""
+    # Your existing CSS styling code from app.py
     st.markdown("""
     <style>
         /* Main theme - updated background with new gradient, light text */
@@ -299,17 +298,17 @@ def apply_custom_css():
     """, unsafe_allow_html=True)
 
 def display_header():
-    """Display the header with logo."""
-    col1, col2 = st.columns([1, 15])
-    with col1:
-        st.markdown("""
-        <div class="logo-container">
-            <span style="font-size: 40px; color: #3a7be0; display: flex; align-items: center; justify-content: center; margin-top: 8px;">🗿</span>
-        </div>
-        """, unsafe_allow_html=True)
-    with col2:
-        st.title("RowBlaze")
-        st.markdown("<p style='color: #999; margin-top: -10px;'>RAG for Structured data</p>", unsafe_allow_html=True)
+    """Display header with only the image logo on left side, medium size."""
+    col1, col2 = st.columns([1, 3])  # 1:3 ratio gives logo ~25% width on left
+    
+    with col1:  # Left column
+        logo_path = Path(__file__).parent / "assets" / "cover.png"
+        if logo_path.exists():
+            # Display logo with medium size (width=150)
+            st.image(str(logo_path), width=250)
+        else:
+            st.markdown("<div style='font-size:42px'>🗿</div>", unsafe_allow_html=True)
+    
 
 def display_chat_messages():
     """Display chat messages from history."""
@@ -320,119 +319,67 @@ def display_chat_messages():
             st.markdown(f'<div class="bot-message">{message["content"]}</div>', unsafe_allow_html=True)
 
 async def process_query(query: str):
-    """Process a user query and get response from RAG system."""
+    """Process a user query and get response from RAG system using the API."""
     try:
-        # Create message object for retrieval
-        message = Message(
-            params={
-                "question": query,
-                "top_k_chunks": st.session_state.get("top_k_chunks", 5),
-                "enable_references_citations": st.session_state.get("enable_citations", True),
-                "deep_research": st.session_state.get("deep_research", False),
-                "auto_chunk_sizing": st.session_state.get("auto_chunk_sizing", True),
-            },
-            config={
-                "index_name": st.session_state.index_name,
-            }
-        )
-        
-        # Call the retrieval function
-        response = await retrieval_handle_request(message)
-        
-        if response.failed:
-            return f"Error: {response.message}"
-        
-        # Extract the actual message content without the Message wrapper
-        if hasattr(response.message, 'message'):
-            if isinstance(response.message.message, dict) and 'final_answer' in response.message.message:
-                return response.message.message['final_answer']
-            elif isinstance(response.message.message, str):
-                return response.message.message
-        
-        context = str(response.message)
-        if "Original Query:" in context and "Vector Search Results" in context:
-            # This is raw context - we need to generate a final answer
-            final_answer_message = Message(
-                params={
-                    "question": query,
-                    "context": context,
-                    "generate_final_answer": True,
-                    "enable_references_citations": True,
-                },
-                config={
-                    "index_name": st.session_state.index_name,
-                }
-            )
-            
-            # Request final answer generation
-            final_response = await retrieval_handle_request(final_answer_message)
-            if not final_response.failed and final_response.message:
-                if hasattr(final_response.message, 'message'):
-                    if isinstance(final_response.message.message, dict) and 'final_answer' in final_response.message.message:
-                        return final_response.message.message['final_answer']
-                    else:
-                        return str(final_response.message.message)
-                return str(final_response.message)
-                
-        # Fallback: just return whatever we got
-        return str(response.message)
-    except Exception as e:
-        return f"An error occurred: {str(e)}"
-
-async def process_file_upload(uploaded_file):
-    """Process an uploaded file using the ingestion module."""
-    try:
-        # Save the uploaded file temporarily
-        with tempfile.NamedTemporaryFile(delete=False, suffix=f"_{uploaded_file.name}") as temp:
-            temp.write(uploaded_file.getvalue())
-            temp_path = temp.name
-        
-        # Create message object for ingestion
-        params = {
+        # Create payload for API call
+        payload = {
+            "question": query,
             "index_name": st.session_state.index_name,
-            "file_name": uploaded_file.name,
-            "file_path": temp_path,
-            "description": st.session_state.get("doc_description", f"Uploaded document: {uploaded_file.name}"),
-            "is_ocr_pdf": st.session_state.get("is_ocr", False),
-            "is_structured_pdf": st.session_state.get("is_structured_pdf", False),
-            "chunk_size": 1024,
-            "chunk_overlap": 512,
+            "top_k_chunks": st.session_state.get("top_k_chunks", 5),
+            "enable_references_citations": st.session_state.get("enable_citations", True),
+            "deep_research": st.session_state.get("deep_research", False),
+            "auto_chunk_sizing": st.session_state.get("auto_chunk_sizing", True),
+            "model": st.session_state.selected_model,
+            "max_tokens": MODEL_TOKEN_LIMITS[st.session_state.selected_model]
         }
         
-        message = Message(
-            params=params,
-            config={
-                "api_key": os.getenv("OPEN_AI_KEY"),
-            }
-        )
-        
-        # Call the ingestion function
-        response = await ingestion_handle_request(message)
-        
-        # Clean up temp file
-        try:
-            os.unlink(temp_path)
-        except OSError:
-            pass
-        
-        if response.failed:
-            return False, f"Error: {response.message}"
-        
-        # Refresh the indexed files list after successful upload
-        print("File uploaded successfully, refreshing file list...")
-        # Add a small delay to ensure the document is indexed
-        await asyncio.sleep(2)
-        st.session_state.indexed_files = await fetch_unique_files_from_es(st.session_state.index_name)
-        st.session_state.files_last_fetched = time.time()
-        
-        return True, "Successfully processed and indexed"
+        # Call the retrieval API
+        async with httpx.AsyncClient(timeout=300.0) as client:
+            response = await client.post(f"{API_URL}/query", json=payload)
+            response.raise_for_status()
+            result = response.json()
+            
+            return result.get("answer", "No answer generated")
+            
+    except httpx.RequestError as e:
+        return f"Error: Request to API failed: {str(e)}"
+    except httpx.HTTPStatusError as e:
+        return f"Error: API returned {e.response.status_code}: {e.response.text}"
     except Exception as e:
-        # Clean up temp file on error
-        try:
-            if 'temp_path' in locals():
-                os.unlink(temp_path)
-        except OSError:
-            pass
+        return f"An unexpected error occurred: {str(e)}"
+
+async def process_file_upload(uploaded_file):
+    """Process an uploaded file using the API."""
+    try:
+        # Prepare form data
+        files = {"file": (uploaded_file.name, uploaded_file.getvalue())}
+        data = {
+            "index_name": st.session_state.index_name,
+            "description": st.session_state.get("doc_description", f"Uploaded document: {uploaded_file.name}"),
+            "is_ocr_pdf": str(st.session_state.get("is_ocr_pdf", False)).lower(),
+            "is_structured_pdf": str(st.session_state.get("is_structured_pdf", False)).lower(),
+            "model": st.session_state.selected_model,
+            "max_tokens": str(MODEL_TOKEN_LIMITS[st.session_state.selected_model])
+        }
+        
+        # Make API call
+        async with httpx.AsyncClient(timeout=60.0) as client:
+            response = await client.post(f"{API_URL}/ingest", files=files, data=data)
+            
+            if response.status_code == 200:
+                result = response.json()
+                
+                # Refresh the indexed files list after successful upload
+                files_response = await client.get(f"{API_URL}/files/{st.session_state.index_name}")
+                if files_response.status_code == 200:
+                    st.session_state.indexed_files = files_response.json()
+                    st.session_state.files_last_fetched = time.time()
+                
+                return True, result.get("message", "Successfully processed and indexed")
+            else:
+                return False, f"Error: API returned status {response.status_code}: {response.text}"
+                
+    except Exception as e:
         return False, f"Processing failed: {str(e)}"
 
 def handle_chat_input():
@@ -463,129 +410,19 @@ def handle_file_upload():
         if success:
             st.session_state.upload_status = "✅ " + message
         else:
-            st.session_state.upload_status = "❌ " + message
+            st.session_state.upload_status = "🔄" + message
 
 def clear_chat():
     """Clear the chat history."""
     st.session_state.messages = []
 
-async def ensure_index_exists(index_name: str):
-    """Ensure the Elasticsearch index exists, creating it if necessary."""
-    try:
-        from elasticsearch import AsyncElasticsearch
-        import os
-        import json
-        from src.core.ingestion.rag_ingestion import CHUNKED_PDF_MAPPINGS
+MODEL_TOKEN_LIMITS = {
+    "gpt-4o-mini-2024-07-18": 16384,
+    "gpt-4.1-nano-2025-04-14": 32768,
+    "gpt-5-nano-2025-08-07": 128000,
+    "gpt-oss-120b": 131072
+}
 
-        # Get credentials from environment
-        ELASTICSEARCH_URL = os.getenv("RAG_UPLOAD_ELASTIC_URL")
-        ELASTICSEARCH_API_KEY = os.getenv("ELASTICSEARCH_API_KEY")
-        
-        es_client = AsyncElasticsearch(
-            ELASTICSEARCH_URL,
-            api_key=ELASTICSEARCH_API_KEY,
-            request_timeout=60,
-            retry_on_timeout=True
-        )
-        
-        if not await es_client.indices.exists(index=index_name):
-            print(f"Creating missing index '{index_name}'...")
-            await es_client.indices.create(index=index_name, body=CHUNKED_PDF_MAPPINGS)
-            print(f"✅ Index '{index_name}' created successfully.")
-        else:
-            print(f"✅ Index '{index_name}' already exists.")
-            
-        await es_client.close()
-        return True
-        
-    except Exception as e:
-        print(f"❌ Error ensuring index exists: {e}")
-        import traceback
-        traceback.print_exc()
-        return False
-
-# Add this function to fetch unique files from Elasticsearch
-
-async def fetch_unique_files_from_es(index_name: str) -> List[str]:
-    """Fetch all unique file names from the Elasticsearch index using the correct field mapping."""
-    try:
-        # Import the connection function from the same module used in retrieval
-        from src.core.retrieval.rag_retrieval import check_async_elasticsearch_connection
-        
-        es_client = await check_async_elasticsearch_connection()
-        if not es_client:
-            print("Could not connect to Elasticsearch to fetch files.")
-            return []
-            
-        try:
-            # First check if the index exists
-            if not await es_client.indices.exists(index=index_name):
-                print(f"Index '{index_name}' does not exist")
-                return []
-            
-            # Get aggregation of unique file names using the exact field mapping from ingestion
-            # FIXED: Remove the 'size' parameter and use only 'body'
-            response = await es_client.search(
-                index=index_name,
-                body={
-                    "size": 0,  # Moved inside body
-                    "aggs": {
-                        "unique_files": {
-                            "terms": {
-                                "field": "metadata.file_name",  # Use the exact field from CHUNKED_PDF_MAPPINGS
-                                "size": 1000  # Get up to 1000 unique file names
-                            }
-                        }
-                    }
-                }
-            )
-            
-            # Extract file names from the aggregation buckets
-            unique_files = []
-            if "aggregations" in response and "unique_files" in response["aggregations"]:
-                buckets = response["aggregations"]["unique_files"]["buckets"]
-                print(f"Found {len(buckets)} unique files in aggregation")
-                for bucket in buckets:
-                    file_name = bucket["key"]
-                    doc_count = bucket["doc_count"]
-                    unique_files.append(file_name)
-                    print(f"File: {file_name} (chunks: {doc_count})")
-            else:
-                print("No aggregations found in response")
-                # Fallback: try to get some sample documents to see the structure
-                sample_response = await es_client.search(
-                    index=index_name,
-                    body={
-                        "size": 5,
-                        "_source": ["metadata.file_name"],
-                        "query": {"match_all": {}}
-                    }
-                )
-                
-                if "hits" in sample_response and "hits" in sample_response["hits"]:
-                    print("Sample documents found:")
-                    for hit in sample_response["hits"]["hits"]:
-                        print(f"Document structure: {hit.get('_source', {})}")
-                        if "metadata" in hit["_source"] and "file_name" in hit["_source"]["metadata"]:
-                            file_name = hit["_source"]["metadata"]["file_name"]
-                            if file_name not in unique_files:
-                                unique_files.append(file_name)
-                    
-            print(f"Total unique files found: {len(unique_files)}")
-            return sorted(unique_files) if unique_files else []
-            
-        finally:
-            if es_client and hasattr(es_client, 'close'):
-                await es_client.close()
-                print("Elasticsearch client closed.")
-            
-    except Exception as e:
-        print(f"Error fetching unique files: {e}")
-        import traceback
-        traceback.print_exc()
-        return []
-
-# Main application function
 def main():
     initialize_session_state()
     apply_custom_css()
@@ -596,23 +433,67 @@ def main():
         
         # Show file processing status
         if st.session_state.upload_message:
-            message_style = "success" if st.session_state.upload_success else "error"
-            icon = "✅" if st.session_state.upload_success else "❌"
+            # MODIFY THIS SECTION
+            if st.session_state.is_processing_file:
+                # Special case for processing state - use the loading icon
+                icon = "🔄"
+                message_style = "processing"
+                background_color = "#1f3b6a"  # Blue-ish background for processing
+                border_color = "#3a7be0"
+            else:
+                # Success or error state
+                message_style = "success" if st.session_state.upload_success else "error"
+                icon = "✅" if st.session_state.upload_success else "❌"
+                background_color = "#1a3d1a" if st.session_state.upload_success else "#5c1c1c"
+                border_color = "#4CAF50" if st.session_state.upload_success else "#f44336"
+            
             st.markdown(f"""
             <div style="padding: 10px; border-radius: 5px; 
-                background-color: {'#1a3d1a' if st.session_state.upload_success else '#5c1c1c'}; 
-                border-left: 3px solid {'#4CAF50' if st.session_state.upload_success else '#f44336'};
+                background-color: {background_color}; 
+                border-left: 3px solid {border_color};
                 margin-bottom: 15px;">
                 {icon} {st.session_state.upload_message}
             </div>
             """, unsafe_allow_html=True)
         
+        st.markdown("### Available OpenAI models")
+        available_models = [
+            "gpt-4o-mini-2024-07-18",
+            "gpt-4.1-nano-2025-04-14",
+            "gpt-5-nano-2025-08-07",
+            "gpt-oss-120b"
+        ]
+
+        model_options = [f"{model} ({MODEL_TOKEN_LIMITS[model]:,} tokens)" for model in available_models]
+        
+        selected_option = st.selectbox(
+            "Select LLM Model",
+            options=model_options,
+            index=model_options.index(f"{st.session_state.selected_model} ({MODEL_TOKEN_LIMITS[st.session_state.selected_model]:,} tokens)") 
+                if st.session_state.selected_model in available_models else 0,
+            key="model_selector_display",
+            help="Choose the OpenAI model to use for processing queries"
+        )
+        
+        selected_model = selected_option.split(" (")[0]
+        
+        if selected_model != st.session_state.selected_model:
+            st.session_state.selected_model = selected_model
+            st.success(f"Model changed to: {selected_model} with {MODEL_TOKEN_LIMITS[selected_model]:,} max output tokens")
+        
         is_structured_pdf = st.checkbox(
             "Structured PDF",
             value=False,
-            help="If checked, each PDF page will be indexed as a single chunk (no enrichment, no knowledge graph)."
+            help="Use only if your pdf contains tables(structured data) like csv"
         )
         st.session_state["is_structured_pdf"] = is_structured_pdf
+        
+        is_ocr_pdf = st.checkbox(
+            "Scanned PDF (OCR)",
+            value=False,
+            help="Use OCR (Optical Character Recognition) for scanned PDFs that contain images of text."
+        )
+        st.session_state["is_ocr_pdf"] = is_ocr_pdf
         
         st.text_area("Document Description", 
                     placeholder="Enter a description of the document", 
@@ -667,7 +548,7 @@ def main():
                 st.markdown("""
                 <div style="text-align: center; color: #999; font-size: 0.9em; padding: 5px 0;">
                 Drag and drop file here<br>
-                PDF, XLSX, CSV
+                PDF, DOCX, DOC, TXT, ODT, XLSX, CSV
                 </div>
                 """, unsafe_allow_html=True)
             
@@ -704,12 +585,15 @@ def main():
                     # Only generate a new key for the file uploader to reset it
                     st.session_state.file_uploader_key = f"uploaded_file_{int(time.time())}"
                     
-                    # Refresh file list only after successful upload
-                    if success:
-                        st.session_state.indexed_files = asyncio.run(
-                            fetch_unique_files_from_es(st.session_state.index_name))
-                        st.session_state.files_last_fetched = time.time()
-        
+                    # Refresh file list after processing
+                    try:
+                        response = requests.get(f"{API_URL}/files/{st.session_state.index_name}")
+                        if response.status_code == 200:
+                            st.session_state.indexed_files = response.json()
+                            st.session_state.files_last_fetched = time.time()
+                    except Exception as e:
+                        print(f"Error refreshing file list: {e}")
+                    
                     st.rerun()  # Show success/error message
                 except Exception as e:
                     st.session_state.is_processing_file = False
@@ -724,11 +608,16 @@ def main():
         with col2:
             if st.button("🔄", help="Refresh file list", disabled=st.session_state.is_processing_file):
                 with st.spinner("Refreshing..."):
-                    # Only refresh files when button is clicked
-                    st.session_state.indexed_files = asyncio.run(fetch_unique_files_from_es(st.session_state.index_name))
-                    st.session_state.files_last_fetched = time.time()
-                    st.session_state.upload_message = "File list refreshed"
-                    st.session_state.upload_success = True
+                    try:
+                        response = requests.get(f"{API_URL}/files/{st.session_state.index_name}")
+                        if response.status_code == 200:
+                            st.session_state.indexed_files = response.json()
+                            st.session_state.files_last_fetched = time.time()
+                            st.session_state.upload_message = "File list refreshed"
+                            st.session_state.upload_success = True
+                    except Exception as e:
+                        st.session_state.upload_message = f"Error refreshing file list: {str(e)}"
+                        st.session_state.upload_success = False
                     st.rerun()
 
         # Update file display section in the sidebar - simplified without delete buttons
@@ -777,30 +666,30 @@ def main():
     user_input_container = st.container()
     with user_input_container:
         col1, col2 = st.columns([8, 1])
-        
+
         # Initialize a key for the input box if it doesn't exist
         if "input_key" not in st.session_state:
             st.session_state.input_key = "user_input_0"
-            
-        with col1:
-            st.text_input("Type your message...", 
-                          key=st.session_state.input_key,
-                          placeholder="Ask anything about the document...",
-                          label_visibility="collapsed")
-        
-        # Create a button with a callback function
+
+        # Single callback used by both Enter and Send button
         def send_callback():
-            user_query = st.session_state[st.session_state.input_key]
-            if user_query.strip():
-                # Add user message to chat
+            user_query = st.session_state.get(st.session_state.input_key, "").strip()
+            if user_query:
                 st.session_state.messages.append({"role": "user", "content": user_query})
-                # Set processing flag to display spinner
                 st.session_state.processing = True
-                # Store query for processing
                 st.session_state.current_query = user_query
-                # Generate a new key for the input box to clear it
+                # Clear input by rotating the key
                 st.session_state.input_key = f"user_input_{int(time.time())}"
-        
+
+        with col1:
+            st.text_input(
+                "Type your message...",
+                key=st.session_state.input_key,
+                placeholder="Ask anything about the document...",
+                label_visibility="collapsed",
+                on_change=send_callback  # Enter triggers this
+            )
+
         with col2:
             st.button("Send", on_click=send_callback)
 
