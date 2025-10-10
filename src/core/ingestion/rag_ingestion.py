@@ -170,6 +170,23 @@ CHUNKED_PDF_MAPPINGS = {
                             "relationship_description": {"type": "text"},
                             "relationship_weight": {"type": "float"}
                         }
+                    },
+                    "hierarchies": {
+                        "type": "nested",
+                        "properties": {
+                            "name": {"type": "keyword"},
+                            "description": {"type": "text"},
+                            "root_type": {"type": "keyword"},
+                            "levels": {
+                                "type": "nested",
+                                "properties": {
+                                    "id": {"type": "keyword"},
+                                    "name": {"type": "keyword"},
+                                    "nodes": {"type": "nested"}
+                                }
+                            },
+                            "relationships": {"type": "nested"}
+                        }
                     }
                 }
             }
@@ -504,6 +521,7 @@ class ChunkingEmbeddingPDFProcessor:
         self.enrich_prompt_template = self._load_prompt_template("chunk_enrichment")
         self.graph_extraction_prompt_template = self._load_prompt_template("graph_extraction")
         self.summary_prompt_template = self._load_prompt_template("summary") 
+        self.graph_hierarchy_prompt_template = self._load_prompt_template("graph_hierarchy")
 
     def _load_prompt_template(self, prompt_name: str) -> str:
         try:
@@ -525,6 +543,52 @@ class ChunkingEmbeddingPDFProcessor:
         except Exception as e:
             print(f"Error loading prompt '{prompt_name}': {e}")
             raise
+    
+    async def _extract_hierarchies(
+        self, chunk_text: str, document_summary: str
+    ) -> List[Dict[str, Any]]:
+        """Extract hierarchical structures from text using LLM."""
+        if self.Server_type == "ARMY":
+            print("Extracting hierarchies using NVIDIA API.")
+            formatted_prompt = self.graph_hierarchy_prompt_template.format(
+                collection_description=document_summary, input_text=chunk_text
+            )
+            messages = [
+                {"role": "system", "content": "You are an expert assistant that identifies hierarchical structures in text and formats them as XML according to the provided schema."},
+                {"role": "user", "content": formatted_prompt},
+            ]
+            xml_response = await self._call_nvidia_api(
+                payload_messages=messages, max_tokens=4000, temperature=0.1
+            )
+            return self._parse_hierarchy_xml(xml_response) if xml_response else []
+        
+        if not self.aclient_openai or not self.graph_hierarchy_prompt_template:
+            print("OpenAI client or hierarchy extraction prompt not available. Skipping hierarchy extraction.")
+            return []
+        
+        formatted_prompt = self.graph_hierarchy_prompt_template.format(
+            collection_description=document_summary, input_text=chunk_text
+        )
+        print(f"Formatted prompt for hierarchy extraction (chunk-level, to {OPENAI_SUMMARY_MODEL}): First 200 chars: {formatted_prompt[:200]}...")
+        
+        messages = [
+            {"role": "system", "content": "You are an expert assistant that identifies hierarchical structures in text and formats them as XML according to the provided schema."},
+            {"role": "user", "content": formatted_prompt}
+        ]
+
+        xml_response_content = await self._call_openai_api(
+            model_name=OPENAI_SUMMARY_MODEL,
+            payload_messages=messages,
+            max_tokens=4000,
+            temperature=0.1
+        )
+        
+        if not xml_response_content:
+            print("LLM returned empty content for hierarchy extraction.")
+            return []
+        
+        print(f"Raw XML response from LLM for hierarchy extraction (first 500 chars):\n{xml_response_content[:500]}")
+        return self._parse_hierarchy_xml(xml_response_content)
     
     def _clean_ocr_repetitions(self, text: str) -> str:
         """Remove repetitive patterns from OCR text."""
@@ -617,6 +681,130 @@ class ChunkingEmbeddingPDFProcessor:
         print("Max retries reached for OpenAI API call. Returning empty string.")
         return ""
 
+    def _parse_hierarchy_xml(self, xml_string: str) -> List[Dict[str, Any]]:
+        """Parse the XML response to extract hierarchical structures."""
+        hierarchies = []
+        
+        cleaned_xml = self._clean_xml_string(xml_string)
+        if not cleaned_xml:
+            print("XML string is empty after cleaning. Cannot parse hierarchies.")
+            return hierarchies
+
+        try:
+            root = ET.fromstring(cleaned_xml)
+            
+            for hierarchy_elem in root.findall(".//hierarchy"):
+                hierarchy = {}
+                
+                # Extract basic hierarchy information
+                name_elem = hierarchy_elem.find("name")
+                desc_elem = hierarchy_elem.find("description")
+                root_type_elem = hierarchy_elem.find("root_type")
+                
+                hierarchy["name"] = name_elem.text.strip() if name_elem is not None and name_elem.text else "Unnamed Hierarchy"
+                hierarchy["description"] = desc_elem.text.strip() if desc_elem is not None and desc_elem.text else ""
+                hierarchy["root_type"] = root_type_elem.text.strip() if root_type_elem is not None and root_type_elem.text else "Unknown"
+                
+                # Process levels
+                levels = []
+                for level_elem in hierarchy_elem.findall(".//levels/level"):
+                    level = {
+                        "id": level_elem.get("id", ""),
+                        "name": level_elem.get("name", "") or level_elem.find("name").text if level_elem.find("name") else "",
+                    }
+                    
+                    # Process level description
+                    level_desc_elem = level_elem.find("description")
+                    if level_desc_elem is not None and level_desc_elem.text:
+                        level["description"] = level_desc_elem.text.strip()
+                    
+                    # Process nodes in this level
+                    nodes = []
+                    for node_elem in level_elem.findall(".//nodes/node"):
+                        node = {
+                            "id": node_elem.get("id", ""),
+                        }
+                        
+                        # Process node name
+                        node_name_elem = node_elem.find("name")
+                        if node_name_elem is not None and node_name_elem.text:
+                            node["name"] = node_name_elem.text.strip()
+                        
+                        # Process children references
+                        children = []
+                        for child_ref_elem in node_elem.findall(".//children/child_ref"):
+                            children.append({
+                                "level": child_ref_elem.get("level", ""),
+                                "node_id": child_ref_elem.get("node_id", "")
+                            })
+                        
+                        if children:
+                            node["children"] = children
+                        
+                        # Process data sources
+                        data_sources_elem = node_elem.find("data_sources")
+                        if data_sources_elem is not None and data_sources_elem.text:
+                            node["data_sources"] = data_sources_elem.text.strip()
+                        
+                        nodes.append(node)
+                    
+                    if nodes:
+                        level["nodes"] = nodes
+                    
+                    levels.append(level)
+                
+                if levels:
+                    hierarchy["levels"] = levels
+                
+                # Process relationships
+                relationships = []
+                for rel_elem in hierarchy_elem.findall(".//relationships/relationship"):
+                    relationship = {
+                        "type": rel_elem.get("type", ""),
+                    }
+                    
+                    # Process source and target
+                    source_elem = rel_elem.find("source")
+                    if source_elem is not None:
+                        relationship["source"] = {
+                            "node_id": source_elem.get("node_id", ""),
+                            "level": source_elem.get("level", "")
+                        }
+                    
+                    target_elem = rel_elem.find("target")
+                    if target_elem is not None:
+                        relationship["target"] = {
+                            "node_id": target_elem.get("node_id", ""),
+                            "level": target_elem.get("level", "")
+                        }
+                    
+                    # Process description and data sources
+                    desc_elem = rel_elem.find("description")
+                    if desc_elem is not None and desc_elem.text:
+                        relationship["description"] = desc_elem.text.strip()
+                    
+                    data_sources_elem = rel_elem.find("data_sources")
+                    if data_sources_elem is not None and data_sources_elem.text:
+                        relationship["data_sources"] = data_sources_elem.text.strip()
+                    
+                    relationships.append(relationship)
+                
+                if relationships:
+                    hierarchy["relationships"] = relationships
+                
+                hierarchies.append(hierarchy)
+            
+            print(f"Successfully parsed {len(hierarchies)} hierarchies using ET.fromstring.")
+            
+        except ET.ParseError as e:
+            print(f"XML parsing error for hierarchies: {e}")
+            # Implement fallback parsing with regex if needed
+        
+        except Exception as e:
+            print(f"An unexpected error occurred during hierarchy XML parsing: {e}")
+        
+        return hierarchies
+    
     def _clean_xml_string(self, xml_string: str) -> str:
         """Cleans the XML string from common LLM artifacts and prepares it for parsing."""
         if not isinstance(xml_string, str):
@@ -1090,11 +1278,12 @@ class ChunkingEmbeddingPDFProcessor:
         file_extension = os.path.splitext(file_name)[1].lower()
         is_tabular_file = file_extension in ['.csv', '.xlsx']
         is_docx_file = file_extension == '.docx'
-        is_pdf_file = file_extension == '.pdf'
+        # is_pdf_file = file_extension == '.pdf'
         is_ocr_pdf = params.get('is_ocr_pdf', False)
         
         chunk_entities = []
         chunk_relationships = []
+        chunk_hierarchies = []
         enriched_text = chunk_text
 
         if is_tabular_file:
@@ -1150,13 +1339,19 @@ class ChunkingEmbeddingPDFProcessor:
                 self._extract_knowledge_graph(chunk_text, contextual_summary)
             )
             
-            if is_docx_file or is_pdf_file:
+            hierarchy_task = asyncio.create_task(
+                self._extract_hierarchies(chunk_text, contextual_summary)
+            )
+
+            if is_docx_file:
                 # For DOCX files, only perform KG extraction, not enrichment
                 print(f"DOCX file detected. Skipping chunk enrichment but performing KG extraction for '{file_name}'.")
                 
                 # Await only the KG task, not both tasks
                 try:
-                    kg_result = await kg_task
+                    kg_result, hierarchy_result = await asyncio.gather(
+                        kg_task, hierarchy_task
+                    )
                     if kg_result:
                         chunk_entities, chunk_relationships = kg_result
                         print(f"KG extracted for DOCX chunk (Page {page_num}, Index {chunk_idx_on_page}): {len(chunk_entities)} entities, {len(chunk_relationships)} relationships.")
@@ -1176,24 +1371,27 @@ class ChunkingEmbeddingPDFProcessor:
                 
                 # Await both tasks for non-DOCX files
                 try:
-                    results = await asyncio.gather(kg_task, enrich_task, return_exceptions=True)
+                    results = await asyncio.gather(kg_task, hierarchy_task, enrich_task, return_exceptions=True)
                     
-                    kg_result_or_exc = results[0]
-                    enrich_result_or_exc = results[1]
-        
-                    if isinstance(kg_result_or_exc, Exception):
-                        print(f"KG extraction failed for chunk (Page {page_num}, Index {chunk_idx_on_page}) for '{file_name}': {kg_result_or_exc}")
-                    elif kg_result_or_exc: 
-                        chunk_entities, chunk_relationships = kg_result_or_exc
-                        print(f"KG extracted for chunk (Page {page_num}, Index {chunk_idx_on_page}): {len(chunk_entities)} entities, {len(chunk_relationships)} relationships.")
+                    if len(results) > 0:
+                        kg_result_or_exc = results[0]
+                        if not isinstance(kg_result_or_exc, Exception):
+                            chunk_entities, chunk_relationships = kg_result_or_exc if kg_result_or_exc else ([], [])
+                            print(f"KG extracted for chunk: {len(chunk_entities)} entities, {len(chunk_relationships)} relationships.")
                     
-                    if isinstance(enrich_result_or_exc, Exception):
-                        print(f"Enrichment failed for chunk (Page {page_num}, Index {chunk_idx_on_page}) for '{file_name}': {enrich_result_or_exc}. Using original text.")
-                    else:
-                        enriched_text = enrich_result_or_exc
-                        print(f"Enrichment successful for chunk (Page {page_num}, Index {chunk_idx_on_page}).")
+                    if len(results) > 1:
+                        hierarchy_result_or_exc = results[1]
+                        if not isinstance(hierarchy_result_or_exc, Exception):
+                            chunk_hierarchies = hierarchy_result_or_exc if hierarchy_result_or_exc else []
+                            print(f"Hierarchies extracted for chunk: {len(chunk_hierarchies)} hierarchies.")
+                    
+                    if len(results) > 2:
+                        enrich_result_or_exc = results[2]
+                        if not isinstance(enrich_result_or_exc, Exception):
+                            enriched_text = enrich_result_or_exc
+                        
                 except Exception as e:
-                    print(f"Error processing chunk pipeline for '{file_name}': {e}")
+                    print(f"Error processing tasks for '{file_name}': {e}")
             
             if chunk_entities:
                     # Create a list of descriptions to embed
@@ -1255,7 +1453,8 @@ class ChunkingEmbeddingPDFProcessor:
             "chunk_index_in_page": chunk_idx_on_page,
             "document_summary": llm_generated_doc_summary,
             "entities": chunk_entities, 
-            "relationships": chunk_relationships 
+            "relationships": chunk_relationships,
+            "hierarchies":chunk_hierarchies
         }
         
         index_name = params.get('index_name')
@@ -2118,6 +2317,8 @@ async def ensure_es_index_exists(client: Any, index_name: str, mappings_body: Di
             current_metadata = current_mapping.get('metadata', {}).get('properties', {})
             current_entities = current_metadata.get('entities', {})
             
+            hierarchies_exists = 'hierarchies' in current_metadata
+            
             # Check if entities field exists and its type
             entities_exists = 'entities' in current_metadata
             entities_is_nested = current_entities.get('type') == 'nested'
@@ -2141,28 +2342,29 @@ async def ensure_es_index_exists(client: Any, index_name: str, mappings_body: Di
                 return True
             
             # If entities field doesn't exist at all, add it as nested
-            if not entities_exists:
-                print(f"Adding entities field as nested to index '{index_name}'")
-                
-                dims = 1024 if os.getenv('SERVER_TYPE') == 'ARMY' else OPENAI_EMBEDDING_DIMENSIONS
+            if not hierarchies_exists:
+                print(f"Adding hierarchies field as nested to index '{index_name}'")
                 
                 try:
                     update_mapping = {
                         "properties": {
                             "metadata": {
                                 "properties": {
-                                    "entities": {
+                                    "hierarchies": {
                                         "type": "nested",
                                         "properties": {
                                             "name": {"type": "keyword"},
-                                            "type": {"type": "keyword"},
                                             "description": {"type": "text"},
-                                            "description_embedding": {
-                                                "type": "dense_vector",
-                                                "dims": dims,
-                                                "index": True,
-                                                "similarity": "cosine"
-                                            }
+                                            "root_type": {"type": "keyword"},
+                                            "levels": {
+                                                "type": "nested",
+                                                "properties": {
+                                                    "id": {"type": "keyword"},
+                                                    "name": {"type": "keyword"},
+                                                    "nodes": {"type": "nested"}
+                                                }
+                                            },
+                                            "relationships": {"type": "nested"}
                                         }
                                     }
                                 }
