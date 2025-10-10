@@ -25,6 +25,9 @@ networkx
 openpyxl
 odfpy
 
+python-multipart 
+httpx
+
 sentence-transformers
 nltk
 torch
