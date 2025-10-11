@@ -1,6 +1,20 @@
 version: '3.8'
 
 services:
+  nginx:
+    build:
+      context: .
+      dockerfile: nginx/Dockerfile
+    container_name: rowblaze-nginx
+    ports:
+      - "80:80"      
+      - "443:443"    
+    depends_on:
+      - api
+      - app
+    networks:
+      - rowblaze-network
+
   api:
     build:
       context: .
@@ -8,8 +22,6 @@ services:
     image: rowblaze-api:latest
     container_name: rowblaze-api
     restart: unless-stopped
-    ports:
-      - "8000:8000"
     environment:
       - OPEN_AI_KEY=${OPEN_AI_KEY}
       - OPENAI_MODEL=${OPENAI_MODEL}
@@ -52,8 +64,6 @@ services:
     image: rowblaze-app:latest
     container_name: rowblaze-app
     restart: unless-stopped
-    ports:
-      - "8501:8501"
     environment:
       - ROWBLAZE_API_URL=http://api:8000/api
     depends_on:
