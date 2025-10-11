@@ -243,6 +243,29 @@ def apply_custom_css():
             background: linear-gradient(90deg, rgba(46, 43, 43, 1) 100%, rgba(0, 212, 255, 1) 0%) !important;
         }
         
+        /* File uploader help text - make it wrap properly */
+        .st-emotion-cache-16idsys p,
+        .stFileUploadDropzone p,
+        [data-testid="stFileUploader"] p {
+            white-space: normal !important;
+            overflow-wrap: break-word !important;
+            word-wrap: break-word !important;
+            max-width: 100% !important;
+            line-height: 1.4 !important;
+        }
+        
+        /* File uploader overall container formatting */
+        [data-testid="stFileUploader"] {
+            width: 100% !important;
+            max-width: 100% !important;
+        }
+        
+        /* Add an appropriate margin below the help text */
+        .st-emotion-cache-16idsys, 
+        .stFileUploadDropzone {
+            margin-bottom: 12px !important;
+        }
+        
         /* Main content containers */
         div[data-testid="stVerticalBlock"] {
             background-color: transparent !important;
