@@ -45,20 +45,20 @@ jobs:
     - name: Lint with flake8
       run: |
         # stop the build if there are Python syntax errors or undefined names
-        flake8 . --count --select=E9,F63,F7,F82 --show-source --statistics --exclude=.venv,venv,env,__pycache__,*.egg-info
+        uv run flake8 . --count --select=E9,F63,F7,F82 --show-source --statistics --exclude=.venv,venv,env,__pycache__,*.egg-info
     
     - name: Run formatting check with black
       run: |
         uv run black --check .
-    
+
     - name: Run import sorting check with isort
       run: |
         uv run isort --check-only .
-    
+
     - name: Run type checking with mypy
       run: |
         uv run mypy --ignore-missing-imports api/ src/ || true
-    
+
     - name: Run tests with pytest
       run: |
         uv run pytest tests/ --cov=api --cov=src --cov-report=xml --cov-report=html
