@@ -12,6 +12,7 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
     libffi-dev \
+    curl \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 
