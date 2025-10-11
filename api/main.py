@@ -3,6 +3,7 @@ import logging
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from dotenv import load_dotenv
+from datetime import datetime
 
 from api.routes import ingestion, retrieval, chat
 
@@ -37,10 +38,10 @@ app.include_router(ingestion.router, prefix="/api", tags=["ingestion"])
 app.include_router(retrieval.router, prefix="/api", tags=["retrieval"])
 app.include_router(chat.router, prefix="/api", tags=["chat"])
 
-@app.get("/health")
+@app.get("/api/health", tags=["Health"])
 async def health_check():
-    """Health check endpoint to verify API is running."""
-    return {"status": "healthy", "version": app.version}
+    """Health check endpoint for container orchestration."""
+    return {"status": "healthy", "timestamp": datetime.now().isoformat()}
 
 @app.on_event("startup")
 async def startup_event():
