@@ -9,6 +9,7 @@ from api.dependencies import get_elasticsearch_client, get_openai_client
 from api.models import FinalAnswerRequest, RetrievalRequest, RetrievalResponse
 from sdk.message import Message
 from sdk.response import FunctionResponse, Messages
+from src.core.agents.static_research_agent import StaticResearchAgent  # Add this import
 from src.core.retrieval.rag_retrieval import RAGFusionRetriever
 
 # Configure logging
@@ -23,80 +24,70 @@ async def query_documents(
     openai_client: AsyncOpenAI = Depends(get_openai_client),
 ):
     """
-    Search for information and generate answers based on indexed documents.
+    Search for information and generate answers based on indexed documents using the Static Research Agent.
     """
     logger.info(f"Query request received: {request.question}")
 
     try:
-        # Create retriever
+        # Create RAGFusionRetriever for the agent
         params = request.dict()
         config = {"index_name": request.index_name}
-
         retriever = RAGFusionRetriever(params, config, es_client, openai_client)
 
-        # Determine optimal chunk count if enabled
-        if request.auto_chunk_sizing:
-            try:
-                top_k_chunks = await retriever._determine_optimal_chunk_count(
-                    request.question
-                )
-                logger.info(f"Using dynamically determined chunk count: {top_k_chunks}")
-            except Exception as e:
-                logger.warning(
-                    f"Error determining optimal chunk count: {e}. Using provided value."
-                )
-                top_k_chunks = request.top_k_chunks
-        else:
-            top_k_chunks = request.top_k_chunks
-
-        # Perform search
-        search_results = await retriever.search(
-            user_query=request.question,
-            initial_candidate_pool_size=top_k_chunks,
-            top_k_kg_entities=top_k_chunks,
-            absolute_score_floor=0.3,
+        # Create and configure the Static Research Agent
+        agent = StaticResearchAgent(
+            llm_client=openai_client,
+            retriever=retriever,
+            llm_model=request.model,
+            max_iterations=5,  # You can make this configurable
         )
 
-        # Generate final answer if needed
-        if not params.get("skip_final_answer", False):
-            llm_formatted_context = search_results.get("llm_formatted_context", "")
+        # Create agent config override with request parameters
+        agent_config_override = {
+            "temperature": 0.3,
+            "max_tokens_llm_response": request.max_tokens,
+            "initial_retrieval_subqueries": 2,
+            "initial_retrieval_top_k_chunks": request.top_k_chunks,
+            "initial_retrieval_top_k_kg": request.top_k_chunks,
+            "perform_initial_retrieval": True,
+            "current_date": "today",
+        }
 
-            # Extract citations
-            cited_files = []
-            if "refrences" in search_results:
-                refs_text = search_results["refrences"]
-                if refs_text and "**Sources:**" in refs_text:
-                    sources_section = refs_text.split("**Sources:**")[1].split("\n\n")[
-                        0
-                    ]
-                    cited_files = [
-                        line.replace("- ", "").strip()
-                        for line in sources_section.strip().split("\n")
-                    ]
+        # Run the agent with the user's query
+        logger.info(f"Running Static Research Agent for query: {request.question}")
+        agent_result = await agent.arun(
+            query=request.question, agent_config_override=agent_config_override
+        )
 
-            # Generate answer
-            final_answer = await retriever._generate_final_answer(
-                original_query=request.question,
-                llm_formatted_context=llm_formatted_context,
-                cited_files=cited_files,
-                model=request.model,
-            )
+        # Extract the answer and any available citations
+        final_answer = agent_result.get("answer", "No answer generated")
 
-            return RetrievalResponse(answer=final_answer, citations=cited_files)
+        # Extract citations from tools used (if any search tools were used)
+        cited_files = []
+        tools_used = agent_result.get("tools_used", [])
 
-        # Return formatted context if no final answer
+        # You can extract file references from the conversation history
+        # or implement a method to track citations through the agent's tool usage
+        for tool_call in tools_used:
+            if tool_call.get("tool_name") in [
+                "search_file_knowledge",
+                "vector_search",
+                "keyword_search",
+            ]:
+                # You might want to implement citation tracking in the agent's tools
+                pass
+
+        logger.info(f"Agent completed with {len(tools_used)} tools used")
+
         return RetrievalResponse(
-            answer=search_results.get(
-                "llm_formatted_context", "No formatted context generated."
-            ),
-            citations=[],
-        )
+            answer=final_answer, citations=cited_files
+        )  # Return citations if available
 
     except Exception as e:
-        logger.error(f"Error during retrieval: {str(e)}", exc_info=True)
+        logger.error(f"Error during agent processing: {str(e)}", exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Error during retrieval: {str(e)}",
+            detail=f"Error during agent processing: {str(e)}",
         )
 
 
