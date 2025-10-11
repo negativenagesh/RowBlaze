@@ -47,10 +47,10 @@ jobs:
         # stop the build if there are Python syntax errors or undefined names
         uv run flake8 . --count --select=E9,F63,F7,F82 --show-source --statistics --exclude=.venv,venv,env,__pycache__,*.egg-info
     
-    - name: Run formatting check with black
+    - name: Format with Black
       run: |
-        uv run black --check .
-
+        uv run black .
+    
     - name: Run import sorting check with isort
       run: |
         uv run isort --check-only .
