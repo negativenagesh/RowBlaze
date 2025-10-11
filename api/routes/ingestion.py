@@ -2,6 +2,7 @@ import os
 import tempfile
 import hashlib
 import logging
+import json
 from typing import List
 from pathlib import Path
 from fastapi import APIRouter, Depends, UploadFile, File, Form, HTTPException, status, BackgroundTasks
@@ -117,34 +118,75 @@ async def list_files(
     try:
         # Check if index exists
         if not await es_client.indices.exists(index=index_name):
+            logger.warning(f"Index {index_name} does not exist")
             return []
         
-        # Get aggregation of unique file names
-        # CHANGE: Use metadata.file_name.keyword instead of metadata.file_name
-        response = await es_client.search(
-            index=index_name,
-            body={
-                "size": 0,
-                "aggs": {
-                    "unique_files": {
-                        "terms": {
-                            "field": "metadata.file_name.keyword",  # Changed .keyword suffix
-                            "size": 1000
+        # Try multiple field paths that might contain file names
+        possible_fields = [
+            "metadata.file_name.keyword",
+            "file_name.keyword",
+            "metadata.filename.keyword",
+            "filename.keyword",
+            "metadata.name.keyword",
+            "name.keyword"
+        ]
+        
+        unique_files = []
+        
+        for field in possible_fields:
+            try:
+                logger.info(f"Trying to get files using field: {field}")
+                response = await es_client.search(
+                    index=index_name,
+                    body={
+                        "size": 0,
+                        "aggs": {
+                            "unique_files": {
+                                "terms": {
+                                    "field": field,
+                                    "size": 1000
+                                }
+                            }
                         }
                     }
-                }
-            }
-        )
+                )
+                
+                if "aggregations" in response and "unique_files" in response["aggregations"]:
+                    buckets = response["aggregations"]["unique_files"]["buckets"]
+                    if buckets:  # If we found files with this field
+                        for bucket in buckets:
+                            file_name = bucket["key"]
+                            unique_files.append(file_name)
+                        logger.info(f"Found {len(unique_files)} files using field {field}")
+                        break  # Break if we found files
+            except Exception as field_error:
+                logger.warning(f"Error with field {field}: {str(field_error)}")
+                continue
         
-        # Extract file names from the aggregation buckets
-        unique_files = []
-        if "aggregations" in response and "unique_files" in response["aggregations"]:
-            buckets = response["aggregations"]["unique_files"]["buckets"]
-            for bucket in buckets:
-                file_name = bucket["key"]
-                unique_files.append(file_name)
+        # If no files found with the standard approach, try a more general query
+        if not unique_files:
+            logger.info("No files found with standard fields, trying general query")
+            # Get a sample of documents to inspect
+            sample_response = await es_client.search(
+                index=index_name,
+                body={"size": 10, "_source": True}
+            )
+            
+            # Log the structure for debugging
+            if "hits" in sample_response and "hits" in sample_response["hits"]:
+                for hit in sample_response["hits"]["hits"]:
+                    source = hit["_source"]
+                    logger.info(f"Document structure: {json.dumps(source)}")
+                    # Try to extract filename from document structure
+                    if "metadata" in source and "file_name" in source["metadata"]:
+                        unique_files.append(source["metadata"]["file_name"])
+                    elif "file_name" in source:
+                        unique_files.append(source["file_name"])
         
-        return sorted(unique_files)
+        # Remove duplicates and sort
+        unique_files = sorted(list(set(unique_files)))
+        logger.info(f"Returning {len(unique_files)} unique files")
+        return unique_files
         
     except Exception as e:
         logger.error(f"Error listing files: {str(e)}", exc_info=True)
