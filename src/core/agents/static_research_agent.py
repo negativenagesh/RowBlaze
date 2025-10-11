@@ -1,14 +1,10 @@
 import asyncio
 import json
-import logging
 import os
 import re
-import subprocess
-import sys
-import tempfile
 import xml.etree.ElementTree as ET
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple, Union
+from typing import Any, Dict, List, Optional, Union
 
 import yaml
 from dotenv import load_dotenv
@@ -22,98 +18,27 @@ try:
         KGRelationship,
         KGSearchResult,
     )
-    from ...utils.logging_config import setup_logger
-    from ..retrieval.new_rag_fusion import RAGFusionRetriever
-    from ..tools.get_file_content import GetFileContentTool
-    from ..tools.search_file_descriptions import SearchFileDescriptionsTool
+    from ..retrieval.rag_retrieval import RAGFusionRetriever
+    from ..tools.KeywordSearch import KeywordSearchTool
     from ..tools.search_file_knowledge import SearchFileKnowledgeTool
+    from ..tools.vectorsearch import VectorSearchTool
 except ImportError as e:
     print(
         f"ImportError in static_research_agent.py: {e}. Please ensure all dependencies are correctly placed and __init__.py files exist."
     )
-    print(
-        "This agent expects RAGFusionRetriever, tools, and AggregateSearchResult to be importable from its location."
-    )
     raise
 
 load_dotenv()
-logger = setup_logger(__name__)
 
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 ELASTICSEARCH_URL = os.getenv("ELASTICSEARCH_URL")
 ELASTICSEARCH_API_KEY = os.getenv("ELASTICSEARCH_API_KEY")
 
 DEFAULT_LLM_MODEL = os.getenv("OPENAI_CHAT_MODEL")
-DEFAULT_MAX_ITERATIONS = 5
+DEFAULT_MAX_ITERATIONS = 2  # Changed from 5 to 2
 DEFAULT_AGENT_CONFIG_PATH = (
     Path(__file__).parent.parent / "prompts" / "static_research_agent.yaml"
 )
-
-
-class ReasoningTool:
-    """Tool definition for the reasoning capability."""
-
-    name = "reason"
-    description = "Execute a reasoning query using a specialized reasoning LLM to analyze the conversation or a specific query. Use this for deep thinking, planning, and analysis."
-    parameters = {
-        "type": "object",
-        "properties": {
-            "query": {
-                "type": "string",
-                "description": "The reasoning query to execute based on the conversation history.",
-            }
-        },
-        "required": ["query"],
-    }
-
-    def set_context(self, context: Any):
-        pass
-
-
-class CritiqueTool:
-    """Tool definition for the critique capability."""
-
-    name = "critique"
-    description = "Critique the conversation history to find logical fallacies, biases, or overlooked considerations. Helps improve the quality of the reasoning."
-    parameters = {
-        "type": "object",
-        "properties": {
-            "query": {
-                "type": "string",
-                "description": "A specific question to guide the critique. Can be empty.",
-            },
-            "focus_areas": {
-                "type": "array",
-                "items": {"type": "string"},
-                "description": "Optional list of areas to focus the critique on.",
-            },
-        },
-        "required": [],
-    }
-
-    def set_context(self, context: Any):
-        pass
-
-
-class PythonInterpreterTool:
-    """Tool definition for the Python interpreter."""
-
-    name = "execute_python"
-    description = "Executes Python code in a separate, isolated subprocess with a timeout. Use for calculations, data manipulation, simulations, etc."
-    parameters = {
-        "type": "object",
-        "properties": {
-            "code": {"type": "string", "description": "The Python code to execute."},
-            "timeout": {
-                "type": "integer",
-                "description": "Timeout in seconds (default: 10).",
-            },
-        },
-        "required": ["code"],
-    }
-
-    def set_context(self, context: Any):
-        pass
 
 
 class StaticResearchAgent:
@@ -132,17 +57,11 @@ class StaticResearchAgent:
                     "OPENAI_API_KEY not found and llm_client not provided."
                 )
             self.llm_client = AsyncOpenAI(api_key=openai_api_key)
-            logger.info(
-                "Initialized default AsyncOpenAI client for StaticResearchAgent."
-            )
         else:
             self.llm_client = llm_client
 
         if retriever is None:
             self.retriever = RAGFusionRetriever()
-            logger.info(
-                "Initialized default RAGFusionRetriever for StaticResearchAgent."
-            )
         else:
             self.retriever = retriever
 
@@ -151,65 +70,58 @@ class StaticResearchAgent:
         )
         self.config = self._load_config()
 
-        self.llm_model = llm_model or self.config.get(DEFAULT_LLM_MODEL)
-        self.max_iterations = max_iterations or self.config.get(DEFAULT_MAX_ITERATIONS)
+        self.llm_model = llm_model or self.config.get("llm_model", DEFAULT_LLM_MODEL)
+        self.max_iterations = max_iterations or self.config.get(
+            "max_iterations", DEFAULT_MAX_ITERATIONS
+        )
 
         self.system_prompt_template = self._load_prompt_template_from_config(
             "static_research_agent"
         )
 
-        # Initialize tools
-        self.tools = {
-            "search_file_knowledge": SearchFileKnowledgeTool(),
-            "search_file_descriptions": SearchFileDescriptionsTool(),
-            "get_file_content": GetFileContentTool(),
-            "reason": ReasoningTool(),
-            "critique": CritiqueTool(),
-            "execute_python": PythonInterpreterTool(),
-        }
-        # Set context for tools if they need it (e.g., for calling agent's methods)
+        # Initialize only the 3 imported tools with proper error handling
+        self.tools = {}
+
+        try:
+            self.tools["search_file_knowledge"] = SearchFileKnowledgeTool()
+        except Exception as e:
+            print(f"Warning: Could not initialize SearchFileKnowledgeTool: {e}")
+
+        try:
+            self.tools["vector_search"] = VectorSearchTool()
+        except Exception as e:
+            print(f"Warning: Could not initialize VectorSearchTool: {e}")
+
+        try:
+            self.tools["keyword_search"] = KeywordSearchTool()
+        except Exception as e:
+            print(f"Warning: Could not initialize KeywordSearchTool: {e}")
+
+        # Set context for tools if they need it
         for tool_instance in self.tools.values():
             if hasattr(tool_instance, "set_context"):
                 tool_instance.set_context(self)
-        logger.info(
-            f"StaticResearchAgent initialized with model: {self.llm_model}, max_iterations: {self.max_iterations}"
-        )
-        logger.debug(f"Tools available: {list(self.tools.keys())}")
+
+        # NEW: Store iteration results for combining
+        self.iteration_results = {}
 
     def _load_config(self) -> Dict[str, Any]:
         try:
             with open(self.config_path, "r") as f:
                 config_data = yaml.safe_load(f)
             if not isinstance(config_data, dict):
-                logger.error(
-                    f"Config file {self.config_path} did not load as a dictionary."
-                )
                 return {}
-            logger.info(f"Successfully loaded agent config from {self.config_path}")
             return config_data
         except FileNotFoundError:
-            logger.error(
-                f"Agent config file not found: {self.config_path}. Using empty config."
-            )
             return {}
-        except Exception as e:
-            logger.error(
-                f"Error loading agent config from {self.config_path}: {e}",
-                exc_info=True,
-            )
+        except Exception:
             return {}
 
     def _load_prompt_template_from_config(self, prompt_key: str) -> str:
         prompt_details = self.config.get(prompt_key, {})
         if isinstance(prompt_details, dict) and "template" in prompt_details:
-            logger.info(
-                f"Successfully loaded prompt template for '{prompt_key}' from agent config."
-            )
             return prompt_details["template"]
         else:
-            logger.warning(
-                f"Prompt template for '{prompt_key}' not found directly in agent config. Attempting to load from default prompts location."
-            )
             try:
                 prompt_file_path = (
                     Path(__file__).parent.parent / "prompts" / f"{prompt_key}.yaml"
@@ -217,36 +129,127 @@ class StaticResearchAgent:
                 with open(prompt_file_path, "r") as f:
                     data = yaml.safe_load(f)
                 if data and prompt_key in data and "template" in data[prompt_key]:
-                    logger.info(
-                        f"Successfully loaded prompt template for '{prompt_key}' from {prompt_file_path}."
-                    )
                     return data[prompt_key]["template"]
                 else:
-                    logger.error(
-                        f"Prompt template for '{prompt_key}' not found or invalid in {prompt_file_path}."
-                    )
                     raise ValueError(
                         f"Invalid or missing prompt structure for {prompt_key}"
                     )
-            except Exception as e:
-                logger.error(
-                    f"Failed to load fallback prompt for {prompt_key}: {e}",
-                    exc_info=True,
-                )
+            except Exception:
                 return "You are a helpful assistant. Answer the user's query based on the provided context. Today's date is {date}."
+
+    # NEW: Add query classification method to the agent
+    async def _classify_query_type(self, query: str) -> str:
+        """
+        Uses an LLM to classify the user's query into a specific category.
+        """
+        classification_prompt = f"""
+        You are an expert query classifier. Your task is to classify the user's query into one of the following categories based on its intent. Respond with ONLY the category name.
+
+        Categories:
+        - `factual_lookup`: For queries asking for specific, discrete pieces of information, like a number, name, date, or a specific definition. Example: "What is the lease start date for Tenant X?" or "How many floors does the building have?"
+        - `summary_extraction`: For queries that ask for a summary of a topic, document, or concept. Example: "Summarize the main points of the contract." or "Provide an overview of the quarterly financial report."
+        - `comparison`: For queries that ask to compare two or more items. Example: "Compare the lease terms for Tenant A and Tenant B."
+        - `complex_analysis`: For broad, open-ended questions that require synthesizing information from multiple sources or analyzing relationships. This is the default for queries that don't fit other categories. Example: "What are the potential risks associated with the new project?"
+
+        User Query: "{query}"
+
+        Category:
+        """
+        valid_types = [
+            "factual_lookup",
+            "summary_extraction",
+            "comparison",
+            "complex_analysis",
+        ]
+
+        try:
+            messages = [{"role": "user", "content": classification_prompt}]
+
+            response = await self.llm_client.chat.completions.create(
+                model=self.llm_model,
+                messages=messages,
+                max_tokens=20,
+                temperature=0.0,
+            )
+
+            query_type = response.choices[0].message.content.strip().lower()
+
+            if query_type in valid_types:
+                print(f"✅ Query classified as: '{query_type}'")
+                return query_type
+            else:
+                print(
+                    f"⚠️ Warning: LLM returned invalid query type '{query_type}'. Defaulting to 'complex_analysis'."
+                )
+                return "complex_analysis"
+
+        except Exception as e:
+            print(f"⚠️ Error classifying query: {e}. Defaulting to 'complex_analysis'.")
+            return "complex_analysis"
+
+    # NEW: Method to determine dynamic top_k based on query type
+    def _get_dynamic_top_k(self, query_type: str) -> int:
+        """
+        Returns dynamic top_k chunks based on query classification.
+        """
+        if query_type == "factual_lookup":
+            return 10
+        else:
+            return 20
+
+    # NEW: Method to evaluate if initial results are sufficient
+    def _are_initial_results_sufficient(self, initial_context: str, query: str) -> bool:
+        """
+        Evaluates if the initial retrieval results are sufficient to answer the query.
+        Simple heuristic-based approach.
+        """
+        if (
+            not initial_context
+            or initial_context.strip() == "No initial search results found."
+        ):
+            return False
+
+        # Simple heuristics to determine sufficiency
+        context_length = len(initial_context.strip())
+
+        # If context is too short, it's likely insufficient
+        if context_length < 100:
+            return False
+
+        # Check if context contains key elements that suggest relevant information
+        query_words = set(query.lower().split())
+        context_words = set(initial_context.lower().split())
+        overlap = len(query_words.intersection(context_words))
+
+        # If there's minimal overlap, likely insufficient
+        if overlap < 2:
+            return False
+
+        return True
+
+    # NEW: Method to combine results from multiple iterations
+    def _combine_iteration_results(self) -> str:
+        """
+        Combines results from multiple iterations with clear labeling.
+        """
+        combined_context = ""
+
+        for iteration_num, result in self.iteration_results.items():
+            combined_context += f"\n\n=== ITERATION {iteration_num} RESULTS ===\n"
+            combined_context += result
+            combined_context += f"\n=== END ITERATION {iteration_num} ===\n"
+
+        return combined_context
 
     def _parse_llm_tool_calls(self, response_content: str) -> List[Dict[str, Any]]:
         tool_calls = []
         try:
-            # Match the user-specified <function_calls> block
             match = re.search(
                 r"<function_calls>(.*?)</function_calls>", response_content, re.DOTALL
             )
             if not match:
                 return []
 
-            # The content inside <function_calls> is a series of <invoke> blocks
-            # Wrap in a root element for valid XML parsing
             xml_str = f"<root>{match.group(1)}</root>"
             root = ET.fromstring(xml_str)
 
@@ -257,7 +260,6 @@ class StaticResearchAgent:
                 if name_elem is not None and name_elem.text:
                     tool_name = name_elem.text.strip()
                     parameters = {}
-                    # Parameters are expected to be a single JSON blob inside the <parameters> tag
                     if (
                         params_elem is not None
                         and params_elem.text
@@ -266,23 +268,15 @@ class StaticResearchAgent:
                         try:
                             parameters = json.loads(params_elem.text)
                         except json.JSONDecodeError:
-                            logger.error(
-                                f"Failed to parse JSON from <parameters> for tool {tool_name}. Content: {params_elem.text}"
-                            )
-                            continue  # Skip this malformed tool call
+                            continue
                     tool_calls.append(
                         {"tool_name": tool_name, "parameters": parameters}
                     )
 
-        except ET.ParseError as e:
-            logger.error(
-                f"XML parsing error for tool calls: {e}. Content: {response_content[:500]}"
-            )
-        except Exception as e:
-            logger.error(
-                f"Unexpected error parsing tool calls: {e}. Content: {response_content[:500]}",
-                exc_info=True,
-            )
+        except ET.ParseError:
+            pass
+        except Exception:
+            pass
         return tool_calls
 
     async def _execute_tool_call(
@@ -292,114 +286,92 @@ class StaticResearchAgent:
         current_config: Dict[str, Any],
         messages: List[Dict[str, Any]],
     ) -> str:
-        logger.info(
-            f"Attempting to execute tool: {tool_name} with parameters: {parameters}"
-        )
         tool_instance = self.tools.get(tool_name)
         if not tool_instance:
             return f"Error: Tool '{tool_name}' not found."
 
         try:
-            if tool_name == "search_file_knowledge":
-                query = parameters.get("query")
-                if not query:
-                    return "Error: 'query' parameter missing for search_file_knowledge."
-                tool_output_obj: AggregateSearchResult = (
-                    await self.knowledge_search_method(
-                        query=query, agent_config=current_config
-                    )
-                )
-                return (
-                    tool_output_obj.llm_formatted_context
-                    or "No relevant information found by search_file_knowledge."
-                )
+            if hasattr(tool_instance, "execute"):
+                return await tool_instance.execute(**parameters)
 
-            elif tool_name == "search_file_descriptions":
-                query = parameters.get("query")
+            elif tool_name == "search_file_knowledge":
+                # Use the retriever's search functionality
+                query = parameters.get("query", "")
+                if not query:
+                    return "Error: 'query' parameter is required for search_file_knowledge tool."
+
+                search_result = await self.knowledge_search_method(
+                    query, current_config
+                )
+                return search_result.llm_formatted_context or "No results found."
+
+            elif tool_name == "vector_search":
+                # Use the retriever's vector search
+                query = parameters.get("query", "")
                 if not query:
                     return (
-                        "Error: 'query' parameter missing for search_file_descriptions."
+                        "Error: 'query' parameter is required for vector_search tool."
                     )
-                search_results_dict = await self.file_search_method(
-                    query=query, agent_config=current_config
-                )
-                return search_results_dict.get(
-                    "llm_formatted_context", "No relevant file descriptions found."
-                )
 
-            elif tool_name == "get_file_content":
-                doc_id = parameters.get("document_id")
-                if not doc_id:
-                    return (
-                        "Error: 'document_id' parameter missing for get_file_content."
-                    )
-                content_results_dict = await self.content_method(
-                    filters={"id": {"$eq": doc_id}}, agent_config=current_config
+                search_result = await self.retriever.search(
+                    user_query=query,
+                    num_subqueries=1,
+                    initial_candidate_pool_size=current_config.get(
+                        "tool_top_k_chunks", 5
+                    ),
+                    top_k_kg_entities=0,
                 )
-                return content_results_dict.get(
-                    "llm_formatted_context",
-                    f"Could not retrieve content for document ID {doc_id}.",
-                )
+                return search_result.get("llm_formatted_context", "No results found.")
 
-            elif tool_name == "reason":
-                query = parameters.get("query")
+            elif tool_name == "keyword_search":
+                # Use the retriever's keyword search functionality
+                query = parameters.get("query", "")
                 if not query:
-                    return "Error: 'query' parameter is required for reason tool."
-                return await self._reason(query, messages, current_config)
-
-            elif tool_name == "critique":
-                return await self._critique(
-                    query=parameters.get("query", ""),
-                    focus_areas=parameters.get("focus_areas"),
-                    messages=messages,
-                    config=current_config,
-                )
-
-            elif tool_name == "execute_python":
-                code = parameters.get("code")
-                if not code:
                     return (
-                        "Error: 'code' parameter is required for execute_python tool."
+                        "Error: 'query' parameter is required for keyword_search tool."
                     )
-                timeout = parameters.get("timeout", 10)
-                py_results = await self._execute_python_with_process_timeout(
-                    code, timeout
-                )
-                return self._format_python_results(py_results)
+
+                search_result = await self.file_search_method(query, current_config)
+                return search_result.get("llm_formatted_context", "No results found.")
 
             else:
                 return f"Error: Tool '{tool_name}' execution logic not implemented."
 
         except Exception as e:
-            logger.error(f"Error executing tool {tool_name}: {e}", exc_info=True)
             return f"Error: Failed to execute tool {tool_name}. Details: {str(e)}"
 
     async def arun(
         self, query: str, agent_config_override: Optional[Dict[str, Any]] = None
     ) -> Dict[str, Any]:
         current_config = {**self.config, **(agent_config_override or {})}
-        current_llm_model = current_config.get(self.llm_model)
-        current_max_iterations = current_config.get(self.max_iterations)
-        initial_retrieval_num_sq = current_config.get("initial_retrieval_subqueries", 2)
-        initial_retrieval_top_k_chunks = current_config.get(
-            "initial_retrieval_top_k_chunks", 3
+        current_llm_model = current_config.get("llm_model", self.llm_model)
+        current_max_iterations = current_config.get(
+            "max_iterations", self.max_iterations
         )
+
+        # NEW: Classify query type and set dynamic top_k
+        query_type = await self._classify_query_type(query)
+        dynamic_top_k = self._get_dynamic_top_k(query_type)
+
+        print(
+            f"Query classified as: {query_type}, using dynamic top_k: {dynamic_top_k}"
+        )
+
+        # Use dynamic top_k for initial retrieval
+        initial_retrieval_num_sq = current_config.get("initial_retrieval_subqueries", 2)
+        initial_retrieval_top_k_chunks = dynamic_top_k  # Use dynamic value
         initial_retrieval_top_k_kg = current_config.get(
             "initial_retrieval_top_k_kg", 10
         )
 
-        logger.info(
-            f"StaticResearchAgent starting 'arun' for query: \"{query}\" with model {current_llm_model}, max_iter={current_max_iterations}"
-        )
-
         messages: List[Dict[str, Any]] = []
         executed_tools: List[Dict[str, Any]] = []
+        self.iteration_results = {}  # Reset iteration results
 
-        # 1. Initial Retrieval (Optional, based on config)
-        initial_context = "No initial search performed."  # Default
+        # Initial Retrieval (Iteration 1)
+        initial_context = "No initial search performed."
         if current_config.get("perform_initial_retrieval", True):
             try:
-                logger.info("Performing initial retrieval...")
                 initial_search_results_dict = await self.retriever.search(
                     user_query=query,
                     num_subqueries=initial_retrieval_num_sq,
@@ -409,41 +381,65 @@ class StaticResearchAgent:
                 initial_context = initial_search_results_dict.get(
                     "llm_formatted_context", "No initial search results found."
                 )
-                logger.debug(
-                    f"Initial context formatted (first 500 chars): {initial_context[:500]}"
-                )
+                # Store iteration 1 results
+                self.iteration_results[1] = initial_context
             except Exception as e:
-                logger.error(f"Error during initial retrieval: {e}", exc_info=True)
-                initial_context = "Error during initial search."
+                initial_context = f"Error during initial search: {str(e)}"
+                self.iteration_results[1] = initial_context
 
-        # 2. Prepare System Prompt
         current_date_str = current_config.get("current_date", "today")
-
         system_prompt_from_template = self.system_prompt_template.format(
             date=current_date_str
         )
 
-        instructional_guidance = """
-**Mandatory Research Protocol:**
-You are a research agent. Your primary function is to use tools to gather information. You must follow this protocol for every query:
+        # NEW: Check if initial results are sufficient
+        initial_sufficient = self._are_initial_results_sufficient(
+            initial_context, query
+        )
 
-1.  **Initial Analysis:** The user query and the 'Initial Context' are provided. Treat the 'Initial Context' as a high-level summary or a set of clues, NOT as the final source of truth. It is **never** sufficient for a complete answer.
+        if initial_sufficient:
+            print(
+                "Initial results appear sufficient. Proceeding with single iteration."
+            )
+            instructional_guidance = f"""
+**Research Protocol (Single Iteration - Query Type: {query_type}):**
+The initial retrieval has provided sufficient information for your query type: {query_type}.
 
-2.  **Mandatory Tool Use:** You **MUST** use your tools to dig deeper. Based on the clues in the initial context (like document IDs or key topics), formulate one or more tool calls.
-    *   If you see document IDs, use `get_file_content` to read the full document.
-    *   If you see interesting topics, use `search_file_knowledge` to find more details or related information.
-    *   You can and should call multiple tools in parallel to be efficient.
+**Initial Context Analysis:** The provided 'Initial Context' contains relevant information for the query. However, you should still verify completeness and may use tools if you identify specific gaps.
 
-3.  **Synthesize and Answer:** After you have received the results from your tool calls, and only then, synthesize all the information (initial context + tool results) into a comprehensive final answer.
+**Instructions:**
+1. **Analyze the Initial Context:** Review the provided context thoroughly.
+2. **Optional Tool Use:** If you identify specific gaps or need additional verification, you may use tools:
+   - Use `search_file_knowledge` to search through document contents and knowledge
+   - Use `vector_search` for semantic similarity searches
+   - Use `keyword_search` for exact keyword matching
+3. **Synthesize and Answer:** Provide a comprehensive final answer based on all available information.
+"""
+        else:
+            print(
+                "Initial results appear insufficient. Will proceed with comprehensive tool-based research in iteration 2."
+            )
+            instructional_guidance = f"""
+**Research Protocol (Two Iterations - Query Type: {query_type}):**
+The initial retrieval may not provide complete information for your query type: {query_type}.
 
-**Crucial Rule:** Never provide a final answer based only on the initial context. Your value is in the deep research you perform using your tools. An answer without a preceding tool call in the conversation history is a failure to follow protocol.
+**Mandatory Research Process:**
+1. **Initial Analysis:** The provided 'Initial Context' offers some clues but is likely insufficient for a complete answer.
+2. **Comprehensive Tool Use (Required for Iteration 2):** You MUST use all available tools to gather comprehensive information:
+   - Use `search_file_knowledge` to search through document contents and knowledge
+   - Use `vector_search` for semantic similarity searches
+   - Use `keyword_search` for exact keyword matching
+   - Call multiple tools in parallel to be efficient
+3. **Synthesize and Answer:** After tool execution, combine results from both the initial context and tool results to provide a comprehensive answer.
+
+**Critical:** Given the query type '{query_type}', thorough research is essential for accuracy.
 """
 
         tool_prompt_part = self._construct_tool_prompt_part(list(self.tools.values()))
 
         system_prompt = f"""{system_prompt_from_template}
 {instructional_guidance}
-### Initial Context
+### Initial Context (Iteration 1)
 {initial_context}
 
 {tool_prompt_part}
@@ -454,12 +450,7 @@ You are a research agent. Your primary function is to use tools to gather inform
         iterations_count = 0
         while iterations_count < current_max_iterations:
             iterations_count += 1
-            logger.info(f"Agent Iteration {iterations_count}/{current_max_iterations}")
-
-            if logger.isEnabledFor(logging.DEBUG):
-                logger.debug(
-                    f"Messages to LLM:\n{json.dumps(messages, indent=2, default=str)}"
-                )
+            print(f"\n--- Starting Iteration {iterations_count} ---")
 
             try:
                 llm_response = await self.llm_client.chat.completions.create(
@@ -467,17 +458,16 @@ You are a research agent. Your primary function is to use tools to gather inform
                     messages=messages,
                     temperature=current_config.get("temperature", 0.3),
                     max_tokens=current_config.get("max_tokens_llm_response", 16000),
-                    stop=[
-                        "</function_calls>"
-                    ],  # Advise model to stop after calling functions
+                    stop=["</function_calls>"],
                 )
             except Exception as e:
-                logger.error(f"OpenAI API call failed: {e}", exc_info=True)
                 return {
                     "answer": "Error: LLM API call failed.",
                     "history": messages,
                     "error": str(e),
                     "tools_used": executed_tools,
+                    "query_type": query_type,
+                    "dynamic_top_k": dynamic_top_k,
                 }
 
             assistant_message = llm_response.choices[0].message
@@ -486,12 +476,8 @@ You are a research agent. Your primary function is to use tools to gather inform
             )
             finish_reason = llm_response.choices[0].finish_reason
 
-            # Append the stop sequence back if the model used it
             if finish_reason == "stop":
                 response_content += "</function_calls>"
-
-            logger.debug(f"LLM Raw Response Content:\n{response_content}")
-            logger.debug(f"LLM Finish Reason: {finish_reason}")
 
             current_assistant_response_message = {
                 "role": "assistant",
@@ -501,31 +487,36 @@ You are a research agent. Your primary function is to use tools to gather inform
             parsed_tool_calls = self._parse_llm_tool_calls(response_content)
 
             if parsed_tool_calls:
-                logger.info(
-                    f"LLM requested {len(parsed_tool_calls)} tool calls: {parsed_tool_calls}"
+                print(
+                    f"Iteration {iterations_count}: Executing {len(parsed_tool_calls)} tool calls"
                 )
                 messages.append(current_assistant_response_message)
 
-                # Create tasks for parallel execution
                 tasks = []
                 for tool_call in parsed_tool_calls:
-                    executed_tools.append(tool_call)  # Track the tool call
+                    executed_tools.append(tool_call)
                     tool_name = tool_call["tool_name"]
                     tool_params = tool_call["parameters"]
+                    # Use dynamic top_k for tool calls too
+                    if "top_k_chunks" in current_config:
+                        current_config["tool_top_k_chunks"] = dynamic_top_k
                     tasks.append(
                         self._execute_tool_call(
                             tool_name, tool_params, current_config, messages
                         )
                     )
 
-                # Execute tools in parallel
                 tool_results = await asyncio.gather(*tasks)
 
-                # Aggregate results into a single message
+                # Store tool results for this iteration
+                iteration_tool_results = []
                 all_results_content = []
                 for i, tool_call in enumerate(parsed_tool_calls):
                     tool_name = tool_call["tool_name"]
                     tool_result_str = tool_results[i]
+                    iteration_tool_results.append(
+                        f"Tool: {tool_name}\nResult: {tool_result_str}"
+                    )
 
                     result_block = f"""<result>
 <tool_name>{tool_name}</tool_name>
@@ -534,9 +525,13 @@ You are a research agent. Your primary function is to use tools to gather inform
 </stdout>
 </result>"""
                     all_results_content.append(result_block)
-                    logger.debug(
-                        f"Gathered tool result for {tool_name}: {tool_result_str[:200]}..."
-                    )
+
+                # Store results from this iteration
+                if iterations_count not in self.iteration_results:
+                    self.iteration_results[iterations_count] = ""
+                self.iteration_results[iterations_count] += "\n".join(
+                    iteration_tool_results
+                )
 
                 aggregated_tool_results_message = f"<function_results>\n{''.join(all_results_content)}\n</function_results>"
 
@@ -544,8 +539,30 @@ You are a research agent. Your primary function is to use tools to gather inform
                     {"role": "user", "content": aggregated_tool_results_message}
                 )
             else:
-                # No tool calls, so this is the final answer.
-                # Clean up any potential tool-related XML tags from the final response.
+                # No more tool calls, generate final answer
+                print(
+                    f"Iteration {iterations_count}: No tool calls detected, generating final answer"
+                )
+
+                # Combine all iteration results for final context
+                if len(self.iteration_results) > 1:
+                    combined_context = self._combine_iteration_results()
+
+                    # Update system prompt with combined results
+                    final_system_prompt = f"""{system_prompt_from_template}
+
+### Combined Results from All Iterations
+{combined_context}
+
+**Final Synthesis Instructions:**
+Based on the information gathered across multiple iterations, provide a comprehensive, well-structured answer.
+Clearly indicate which information came from which iteration if relevant.
+Query Type: {query_type}
+Dynamic Top-K Used: {dynamic_top_k}
+"""
+                    # Update the system message
+                    messages[0]["content"] = final_system_prompt
+
                 final_answer = (
                     re.sub(
                         r"<function_calls>.*</function_calls>",
@@ -556,34 +573,45 @@ You are a research agent. Your primary function is to use tools to gather inform
                     .replace("</function_calls>", "")
                     .strip()
                 )
-                logger.info("LLM provided final answer.")
                 messages.append({"role": "assistant", "content": final_answer})
+
                 return {
                     "answer": final_answer,
                     "history": messages,
                     "tools_used": executed_tools,
+                    "query_type": query_type,
+                    "dynamic_top_k": dynamic_top_k,
+                    "iterations_completed": iterations_count,
+                    "iteration_results": self.iteration_results,
                 }
 
-        logger.warning(f"Max iterations ({current_max_iterations}) reached.")
+        # Max iterations reached
         last_llm_content = (
             messages[-1]["content"]
             if messages and messages[-1]["role"] == "assistant"
             else "Max iterations reached without a conclusive answer."
         )
+
+        # Combine results if we have multiple iterations
+        if len(self.iteration_results) > 1:
+            combined_context = self._combine_iteration_results()
+            last_llm_content += f"\n\nCombined Research Results:\n{combined_context}"
+
         return {
             "answer": last_llm_content,
             "history": messages,
             "warning": "Max iterations reached",
             "tools_used": executed_tools,
+            "query_type": query_type,
+            "dynamic_top_k": dynamic_top_k,
+            "iterations_completed": iterations_count,
+            "iteration_results": self.iteration_results,
         }
 
     async def knowledge_search_method(
         self, query: str, agent_config: Optional[Dict[str, Any]] = None
     ) -> AggregateSearchResult:
-        effective_config = (
-            agent_config or self.config
-        )  # Use passed config or agent's default
-        logger.debug(f"Agent's knowledge_search_method called with query: {query}")
+        effective_config = agent_config or self.config
 
         num_sq = effective_config.get("tool_num_subqueries", 1)
         top_k_c = effective_config.get("tool_top_k_chunks", 10)
@@ -614,11 +642,8 @@ You are a research agent. Your primary function is to use tools to gather inform
                                 }
                             )
                         )
-                    except Exception as e_chunk:
-                        logger.error(
-                            f"Error creating ChunkSearchResult from data: {chunk_data}, error: {e_chunk}",
-                            exc_info=True,
-                        )
+                    except Exception:
+                        pass
 
                 for kg_data_item in sq_res.get("retrieved_kg_data", []):
                     if not isinstance(kg_data_item, dict):
@@ -647,18 +672,14 @@ You are a research agent. Your primary function is to use tools to gather inform
                                 }
                             )
                         )
-                    except Exception as e_kg:
-                        logger.error(
-                            f"Error creating KGSearchResult from data: {kg_data_item}, error: {e_kg}",
-                            exc_info=True,
-                        )
+                    except Exception:
+                        pass
         return agg_result
 
     async def file_search_method(
         self, query: str, agent_config: Optional[Dict[str, Any]] = None
     ) -> Dict[str, Any]:
         effective_config = agent_config or self.config
-        logger.debug(f"Agent's file_search_method called with query: {query}")
         return await self.retriever.search(
             user_query=query,
             num_subqueries=effective_config.get("tool_file_search_subqueries", 1),
@@ -673,7 +694,6 @@ You are a research agent. Your primary function is to use tools to gather inform
         options: Optional[Dict] = None,
     ) -> Dict[str, Any]:
         effective_config = agent_config or self.config
-        logger.debug(f"Agent's content_method called with filters: {filters}")
         doc_id_filter = filters.get("id", {}).get("$eq")
         if doc_id_filter:
             query = f"Retrieve all content for document ID {doc_id_filter}"
@@ -712,8 +732,6 @@ You are a research agent. Your primary function is to use tools to gather inform
 </tool_description>"""
             tool_strings.append(tool_str)
 
-        # Pre-join the tool strings to avoid putting a string with a backslash ('\n')
-        # inside an f-string expression, which causes a SyntaxError in Python < 3.12.
         joined_tool_strings = "\n".join(tool_strings)
 
         return f"""### Tool Usage
@@ -733,183 +751,11 @@ Here are the tools available:
 {joined_tool_strings}
 </tools>"""
 
-    async def _reason(
-        self, query: str, messages: List[Dict[str, Any]], config: Dict[str, Any]
-    ) -> str:
-        """
-        Executes a reasoning query using the agent's primary LLM to perform deep thinking,
-        planning, or analysis on the conversation history.
-        """
-        logger.info(
-            f"Executing reasoning tool with query: '{query}' using the agent's primary LLM."
-        )
-
-        # Construct a new set of messages for the reasoning task.
-        reasoning_messages = messages + [{"role": "user", "content": query}]
-
-        try:
-            response = await self.llm_client.chat.completions.create(
-                model=self.llm_model,
-                messages=reasoning_messages,
-                temperature=config.get("temperature", 0.1),
-                max_tokens=config.get("max_tokens_llm_response", 16000),
-            )
-            return response.choices[0].message.content
-        except Exception as e:
-            logger.error(f"Reasoning tool LLM call failed: {e}", exc_info=True)
-            return f"Error during reasoning: {e}"
-
-    async def _critique(
-        self,
-        query: str,
-        focus_areas: Optional[List[str]],
-        messages: List[Dict[str, Any]],
-        config: Dict[str, Any],
-    ) -> str:
-        """Critique the conversation history."""
-        logger.info(
-            f"Executing critique tool with query: {query} and focus areas: {focus_areas}"
-        )
-        if not focus_areas:
-            focus_areas = []
-
-        # Build the critique prompt
-        critique_prompt = (
-            "You are a critical reasoning expert. Your task is to analyze the following conversation "
-            "and critique the reasoning. Look for:\n"
-            "1. Logical fallacies or inconsistencies\n"
-            "2. Cognitive biases\n"
-            "3. Overlooked questions or considerations\n"
-            "4. Alternative approaches\n"
-            "5. Improvements in rigor\n\n"
-        )
-
-        if focus_areas:
-            critique_prompt += f"Focus areas: {', '.join(focus_areas)}\n\n"
-
-        if query.strip():
-            critique_prompt += f"Specific question: {query}\n\n"
-
-        critique_prompt += (
-            "Structure your critique:\n"
-            "1. Summary\n"
-            "2. Key strengths\n"
-            "3. Potential issues\n"
-            "4. Alternatives\n"
-            "5. Recommendations\n\n"
-            "--- CONVERSATION HISTORY ---\n"
-        )
-
-        # Add the conversation history to the prompt
-        conversation_text = "\n".join(
-            f"{msg.get('role', '').upper()}: {msg.get('content', '')}"
-            for msg in messages
-            if msg.get("content") and msg.get("role") in ["user", "assistant", "system"]
-        )
-
-        final_prompt = critique_prompt + conversation_text
-
-        # Use the simplified reason method to process the critique
-        return await self._reason(final_prompt, messages, config)
-
-    async def _execute_python_with_process_timeout(
-        self, code: str, timeout: int = 10
-    ) -> dict[str, Any]:
-        """
-        Executes Python code in a separate subprocess with a timeout.
-        This provides isolation and prevents re-importing the current agent module.
-        """
-        with tempfile.NamedTemporaryFile(
-            mode="w", suffix=".py", delete=False
-        ) as tmp_file:
-            tmp_file.write(code)
-            script_path = tmp_file.name
-        try:
-            # Run the script in a fresh subprocess
-            result = subprocess.run(
-                [sys.executable, script_path],
-                capture_output=True,
-                text=True,
-                timeout=timeout,
-            )
-            return {
-                "stdout": result.stdout,
-                "stderr": result.stderr,
-                "success": result.returncode == 0,
-                "timed_out": False,
-                "timeout": timeout,
-                "error": (
-                    None
-                    if result.returncode == 0
-                    else {
-                        "type": "SubprocessError",
-                        "message": f"Process exited with code {result.returncode}",
-                    }
-                ),
-            }
-        except subprocess.TimeoutExpired as e:
-            return {
-                "stdout": e.stdout or "",
-                "stderr": e.stderr or "",
-                "success": False,
-                "timed_out": True,
-                "timeout": timeout,
-                "error": {
-                    "type": "TimeoutError",
-                    "message": f"Execution exceeded {timeout} second limit.",
-                },
-            }
-        finally:
-            if os.path.exists(script_path):
-                os.remove(script_path)
-
-    def _format_python_results(self, results: dict[str, Any]) -> str:
-        """Format Python execution results for display."""
-        output = []
-
-        if results.get("timed_out"):
-            output.append(
-                f"⚠️ **Execution Timeout**: Code exceeded the {results.get('timeout', 10)} second limit."
-            )
-
-        if results.get("stdout"):
-            output.append(
-                "## Output (stdout):\n```\n" + results["stdout"].rstrip() + "\n```"
-            )
-
-        if not results.get("success"):
-            output.append("## Error (stderr):\n```")
-            stderr_out = results.get("stderr", "").rstrip()
-            if stderr_out:
-                output.append(stderr_out)
-
-            err_obj = results.get("error")
-            if err_obj and err_obj.get("message"):
-                if stderr_out:
-                    output.append("\n")  # Add a newline for separation
-                output.append(err_obj["message"])
-            output.append("```")
-
-        return (
-            "\n".join(output)
-            if output
-            else "Code executed successfully with no output."
-        )
-
 
 async def main_research_agent_example():
-    if not logging.getLogger().hasHandlers():
-        logging.basicConfig(
-            level=logging.INFO,
-            format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-        )
-    logging.getLogger("src.core.agents.static_research_agent").setLevel(logging.DEBUG)
-    logging.getLogger("src.core.retrieval.new_rag_fusion").setLevel(logging.INFO)
-
-    agent = None  # Initialize agent to None for finally block
+    agent = None
     try:
         agent = StaticResearchAgent()
-
         query = input("Enter your research query for the StaticResearchAgent: ").strip()
         if not query:
             print("No query entered. Exiting.")
@@ -921,6 +767,11 @@ async def main_research_agent_example():
         print("\n--- Agent's Final Answer ---")
         print(result.get("answer", "No answer provided."))
 
+        print(f"\n--- Query Analysis ---")
+        print(f"Query Type: {result.get('query_type', 'Unknown')}")
+        print(f"Dynamic Top-K: {result.get('dynamic_top_k', 'Unknown')}")
+        print(f"Iterations Completed: {result.get('iterations_completed', 'Unknown')}")
+
         if result.get("tools_used"):
             print("\n--- Tools Used During Research ---")
             for i, tool_call in enumerate(result["tools_used"], 1):
@@ -928,29 +779,27 @@ async def main_research_agent_example():
                     f"{i}. {tool_call['tool_name']}({json.dumps(tool_call['parameters'])})"
                 )
 
+        if result.get("iteration_results"):
+            print("\n--- Iteration Results Summary ---")
+            for iteration, results in result["iteration_results"].items():
+                print(f"Iteration {iteration}: {len(results)} characters of results")
+
         if result.get("warning"):
             print(f"\nWarning: {result['warning']}")
         if result.get("error"):
             print(f"\nError: {result['error']}")
 
-        if logger.isEnabledFor(logging.DEBUG) and result.get("history"):
-            print("\n--- Full Conversation History (Debug) ---")
-            print(json.dumps(result["history"], indent=2, default=str))
-
     except ValueError as ve:
-        logger.error(f"Initialization error for StaticResearchAgent: {ve}")
+        print(f"Initialization error for StaticResearchAgent: {ve}")
     except Exception as e:
-        logger.error(
-            f"An error occurred during the agent example run: {e}", exc_info=True
-        )
+        print(f"An error occurred during the agent example run: {e}")
     finally:
-        if agent:  # Check if agent was successfully initialized
+        if agent:
             if hasattr(agent, "llm_client") and isinstance(
                 agent.llm_client, AsyncOpenAI
             ):
                 if hasattr(agent.llm_client, "aclose"):
                     await agent.llm_client.aclose()
-                    logger.info("Agent's OpenAI client closed.")
             if (
                 hasattr(agent, "retriever")
                 and hasattr(agent.retriever, "es_client")
@@ -958,11 +807,9 @@ async def main_research_agent_example():
             ):
                 if hasattr(agent.retriever.es_client, "close"):
                     await agent.retriever.es_client.close()
-                    logger.info("Agent's retriever's Elasticsearch client closed.")
 
 
 if __name__ == "__main__":
-
     print("Running StaticResearchAgent example...")
     print("Please ensure your environment variables (e.g., OPENAI_API_KEY) are set.")
     asyncio.run(main_research_agent_example())
