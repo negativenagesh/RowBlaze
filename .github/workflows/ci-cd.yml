@@ -84,6 +84,11 @@ jobs:
         run: |
           docker build -t ${{ env.IMAGE_NAME_API }}:latest -f Dockerfile.api .
 
+      # Add this new step to free up disk space
+      - name: Clean up Docker resources
+        run: |
+          docker system prune -a -f
+
       - name: Run Trivy vulnerability scanner on API image
         uses: aquasecurity/trivy-action@0.24.0
         with:
