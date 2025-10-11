@@ -1,0 +1,116 @@
+name: document
+version:
+  major: 0
+  minor: 1
+  patch: 0
+description: Core document ontology schema for RowBlaze
+entities:
+  - name: Document
+    description: Represents a document in the system
+    fields:
+      - name: id
+        type: string
+        description: Unique identifier for the document
+        required: true
+      - name: title
+        type: string
+        description: Title of the document
+        required: true
+      - name: content
+        type: text
+        description: Full text content of the document
+        required: false
+      - name: file_type
+        type: string
+        description: Type of the document file
+        required: true
+        enum:
+          - pdf
+          - docx
+          - txt
+          - csv
+          - xlsx
+          - image
+      - name: created_at
+        type: datetime
+        description: When the document was created
+        required: true
+      - name: updated_at
+        type: datetime
+        description: When the document was last updated
+        required: true
+      
+  - name: Chunk
+    description: Represents a chunk of text from a document
+    fields:
+      - name: id
+        type: string
+        description: Unique identifier for the chunk
+        required: true
+      - name: document_id
+        type: string
+        description: ID of the parent document
+        required: true
+      - name: content
+        type: text
+        description: Content of the chunk
+        required: true
+      - name: embedding
+        type: vector
+        description: Vector embedding of the chunk content
+        required: false
+      - name: metadata
+        type: object
+        description: Additional metadata for the chunk
+        required: false
+
+  - name: Entity
+    description: Named entity extracted from documents
+    fields:
+      - name: id
+        type: string
+        description: Unique identifier for the entity
+        required: true
+      - name: name
+        type: string
+        description: Name of the entity
+        required: true
+      - name: type
+        type: string
+        description: Type of the entity
+        required: true
+        enum:
+          - person
+          - organization
+          - location
+          - date
+          - concept
+      - name: documents
+        type: array
+        description: Documents where this entity appears
+        required: false
+      - name: metadata
+        type: object
+        description: Additional metadata for the entity
+        required: false
+
+relationships:
+  - name: document_chunks
+    source: Document
+    target: Chunk
+    type: one-to-many
+    description: A document contains many chunks
+    
+  - name: document_entities
+    source: Document
+    target: Entity
+    type: many-to-many
+    description: Documents contain entities, entities appear in documents
+    
+  - name: chunk_entities
+    source: Chunk
+    target: Entity
+    type: many-to-many
+    description: Chunks contain entities, entities appear in chunks
+created: 2023-10-10T00:00:00
+updated: 2023-10-10T00:00:00
