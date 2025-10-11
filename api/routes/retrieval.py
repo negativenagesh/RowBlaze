@@ -1,14 +1,15 @@
 import logging
-from typing import Dict, Any, Optional
-from fastapi import APIRouter, Depends, HTTPException, status
+from typing import Any, Dict, Optional
+
 from elasticsearch import AsyncElasticsearch
+from fastapi import APIRouter, Depends, HTTPException, status
 from openai import AsyncOpenAI
 
-from api.models import RetrievalRequest, FinalAnswerRequest, RetrievalResponse
 from api.dependencies import get_elasticsearch_client, get_openai_client
-from src.core.retrieval.rag_retrieval import RAGFusionRetriever
+from api.models import FinalAnswerRequest, RetrievalRequest, RetrievalResponse
 from sdk.message import Message
 from sdk.response import FunctionResponse, Messages
+from src.core.retrieval.rag_retrieval import RAGFusionRetriever
 
 # Configure logging
 logger = logging.getLogger(__name__)

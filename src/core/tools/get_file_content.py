@@ -1,6 +1,6 @@
-import logging
 import json
-from typing import Any, Dict, Optional, List
+import logging
+from typing import Any, Dict, List, Optional
 
 from elasticsearch import AsyncElasticsearch
 

@@ -1,8 +1,9 @@
 # components/navbar.py
-import streamlit as st
-import os
 import base64
+import os
 from pathlib import Path
+
+import streamlit as st
 
 
 def render_navbar():

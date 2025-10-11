@@ -1,14 +1,15 @@
-import os
 import asyncio
-import yaml
-from pathlib import Path
-from typing import List, Dict, Any, Optional
-import traceback
-import requests
-import time
-import httpx
+import os
 import sys
+import time
+import traceback
+from pathlib import Path
+from typing import Any, Dict, List, Optional
+
+import httpx
+import requests
 import torch
+import yaml
 
 project_root = os.path.abspath(
     os.path.join(os.path.dirname(__file__), "..", "..", "..")
@@ -20,27 +21,22 @@ PROMPTS_DIR = Path(__file__).parent.parent / "prompts"
 
 LOCAL_RERANKER_PATH = "./bge-reranker-base"
 
-import numpy as np
-from dotenv import load_dotenv
-from openai import AsyncOpenAI
 from datetime import datetime, timezone
-from elasticsearch import AsyncElasticsearch
-from elasticsearch.exceptions import TransportError
 
 import numpy as np
 from dotenv import load_dotenv
-from openai import AsyncOpenAI
-from datetime import datetime, timezone
 from elasticsearch import AsyncElasticsearch
 from elasticsearch.exceptions import TransportError
+from openai import AsyncOpenAI
+
+from sdk.message import Message
+from sdk.response import FunctionResponse, Messages
 
 # from sentence_transformers.cross_encoder import CrossEncoder
 # from sentence_transformers import SentenceTransformer
 # from transformers import AutoModel
 # import nltk
 
-from sdk.response import FunctionResponse, Messages
-from sdk.message import Message
 
 # try:
 #     from sentence_transformers import SentenceTransformer
@@ -1342,11 +1338,11 @@ Your goal is to extract the **single most important keyword** from a user's quer
 **Instructions & Logic**
 1. Carefully analyze the user's query and the file chunk samples from each file.
 2. Identify all possible keywords or values in the query (e.g., column names, field names, page numbers, IDs, names, or unique terms).
-3. **Select the single most specific and rare value or keyword** that will best narrow down the search. 
+3. **Select the single most specific and rare value or keyword** that will best narrow down the search.
    - If the query contains a unique value (such as a page number, ID, or name) that appears in the schema samples, **choose that value**.
    - If there is no such unique value, select the most relevant column or field name.
    - Avoid generic terms that appear in many chunks/files unless no specific value is present.
-4. **Priority Order:** 
+4. **Priority Order:**
    - Unique values (page numbers, IDs, names, dates, etc.) present in both the query and schema samples.
    - Specific column or field names.
    - Domain-specific technical terms.

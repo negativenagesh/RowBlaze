@@ -1,4 +1,5 @@
-from typing import Dict, Any, Optional
+from typing import Any, Dict, Optional
+
 from .base import GraphDatabaseProvider
 from .neo4j_provider import Neo4jProvider
 from .tigergraph_provider import TigerGraphProvider

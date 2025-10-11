@@ -1,23 +1,24 @@
 # src/core/base/parsers/docx_parser.py
-import os
-import logging
-from io import BytesIO
-from typing import AsyncGenerator, Optional, Any
 import base64
-import yaml
+import logging
+import os
+from io import BytesIO
 from pathlib import Path
+from typing import Any, AsyncGenerator, Optional
+
+import yaml
 from dotenv import load_dotenv
+from openai import AsyncOpenAI
 
 from .base_parser import AsyncParser
-from openai import AsyncOpenAI
 
 try:
     import docx
+    from docx.oxml.table import CT_Tbl
+    from docx.oxml.text.paragraph import CT_P
+    from docx.parts.image import ImagePart
     from docx.table import Table
     from docx.text.paragraph import Paragraph
-    from docx.oxml.text.paragraph import CT_P
-    from docx.oxml.table import CT_Tbl
-    from docx.parts.image import ImagePart
 
     PYTHON_DOCX_INSTALLED = True
 except ImportError:
@@ -80,8 +81,9 @@ class DOCXParser(AsyncParser[bytes]):
         """
         # Check image dimensions before processing
         try:
-            from PIL import Image
             from io import BytesIO
+
+            from PIL import Image
 
             img = Image.open(BytesIO(image_bytes))
             width, height = img.size

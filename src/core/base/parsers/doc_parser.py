@@ -1,16 +1,17 @@
+import base64
+import logging
 import os
 import re
-import base64
-import yaml
 from io import BytesIO
-from typing import AsyncGenerator, Optional, Any
 from pathlib import Path
-from dotenv import load_dotenv
+from typing import Any, AsyncGenerator, Optional
 
 import olefile
-import logging
-from .base_parser import AsyncParser
+import yaml
+from dotenv import load_dotenv
 from openai import AsyncOpenAI
+
+from .base_parser import AsyncParser
 
 load_dotenv()
 

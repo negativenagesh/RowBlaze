@@ -1,24 +1,25 @@
-import os
 import asyncio
-from io import BytesIO
-from typing import AsyncGenerator, Dict, Any, List, Tuple
-import yaml
-from pathlib import Path
+import base64
 import copy
-import xml.etree.ElementTree as ET
-import re
 import hashlib
 import json
-import shutil
+import os
 import random
-import traceback
-import requests
-import time
-import base64
-import fitz
-import httpx
+import re
+import shutil
 import sys
 import tempfile
+import time
+import traceback
+import xml.etree.ElementTree as ET
+from io import BytesIO
+from pathlib import Path
+from typing import Any, AsyncGenerator, Dict, List, Tuple
+
+import fitz
+import httpx
+import requests
+import yaml
 
 project_root = os.path.abspath(
     os.path.join(os.path.dirname(__file__), "..", "..", "..")
@@ -28,28 +29,30 @@ if project_root not in sys.path:
 
 PROMPTS_DIR = Path(__file__).parent.parent / "prompts"
 
+from datetime import datetime, timezone
 from typing import Optional
+from urllib.parse import urlparse
+
+import pdfplumber
+import tiktoken
 from dotenv import load_dotenv
 from elasticsearch import AsyncElasticsearch
-from elasticsearch.helpers import async_bulk, BulkIndexError
+from elasticsearch.helpers import BulkIndexError, async_bulk
 from langchain.text_splitter import RecursiveCharacterTextSplitter
-import tiktoken
 from openai import AsyncOpenAI
-import pdfplumber
-from urllib.parse import urlparse
-from datetime import datetime, timezone
-from sdk.response import FunctionResponse, Messages
+
 from sdk.message import Message
+from sdk.response import FunctionResponse, Messages
+from src.core.base.parsers.csv_parser import CSVParser
+from src.core.base.parsers.doc_parser import DOCParser
+from src.core.base.parsers.docx_parser import DOCXParser
+from src.core.base.parsers.image_parser import ImageParser
+from src.core.base.parsers.odt_parser import ODTParser
+from src.core.base.parsers.text_parser import TextParser
+from src.core.base.parsers.xlsx_parser import XLSXParser
 
 # from utils.billing import calculatePriceByApi
 
-from src.core.base.parsers.doc_parser import DOCParser
-from src.core.base.parsers.docx_parser import DOCXParser
-from src.core.base.parsers.odt_parser import ODTParser
-from src.core.base.parsers.text_parser import TextParser
-from src.core.base.parsers.csv_parser import CSVParser
-from src.core.base.parsers.xlsx_parser import XLSXParser
-from src.core.base.parsers.image_parser import ImageParser
 
 try:
     from pdf2image import convert_from_bytes

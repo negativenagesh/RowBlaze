@@ -1,11 +1,12 @@
-import os
 import logging
-from fastapi import FastAPI, APIRouter, Depends, HTTPException, status
-from fastapi.middleware.cors import CORSMiddleware
-from dotenv import load_dotenv
+import os
 from datetime import datetime
 
-from api.routes import ingestion, retrieval, chat
+from dotenv import load_dotenv
+from fastapi import APIRouter, Depends, FastAPI, HTTPException, status
+from fastapi.middleware.cors import CORSMiddleware
+
+from api.routes import chat, ingestion, retrieval
 
 # Load environment variables
 load_dotenv()

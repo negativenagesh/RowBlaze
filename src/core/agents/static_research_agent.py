@@ -3,30 +3,30 @@ import json
 import logging
 import os
 import re
+import subprocess
+import sys
+import tempfile
 import xml.etree.ElementTree as ET
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple, Union
-import tempfile
-import subprocess
-import sys
 
 import yaml
 from dotenv import load_dotenv
 from openai import AsyncOpenAI
 
 try:
-    from ..retrieval.new_rag_fusion import RAGFusionRetriever
-    from ..tools.search_file_knowledge import SearchFileKnowledgeTool
-    from ..tools.search_file_descriptions import SearchFileDescriptionsTool
-    from ..tools.get_file_content import GetFileContentTool
-    from ...utils.logging_config import setup_logger
     from ...core.base.abstractions import (
         AggregateSearchResult,
         ChunkSearchResult,
-        KGSearchResult,
         KGEntity,
         KGRelationship,
+        KGSearchResult,
     )
+    from ...utils.logging_config import setup_logger
+    from ..retrieval.new_rag_fusion import RAGFusionRetriever
+    from ..tools.get_file_content import GetFileContentTool
+    from ..tools.search_file_descriptions import SearchFileDescriptionsTool
+    from ..tools.search_file_knowledge import SearchFileKnowledgeTool
 except ImportError as e:
     print(
         f"ImportError in static_research_agent.py: {e}. Please ensure all dependencies are correctly placed and __init__.py files exist."

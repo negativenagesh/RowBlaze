@@ -1,14 +1,15 @@
-import pytest
-import tempfile
 import os
-from pathlib import Path
 import sys
+import tempfile
+from pathlib import Path
+
+import pytest
 
 # Add the project root to the Python path
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "../../.."))
 
-from src.core.base.parsers.text_parser import TextParser
 from src.core.base.parsers.base_parser import BaseParser
+from src.core.base.parsers.text_parser import TextParser
 
 
 class TestBaseParser:

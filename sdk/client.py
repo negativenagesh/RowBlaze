@@ -1,9 +1,10 @@
-import httpx
 import asyncio
 import logging
-from typing import Dict, Any, Optional, List, Union
-from pydantic import BaseModel, Field
 import os
+from typing import Any, Dict, List, Optional, Union
+
+import httpx
+from pydantic import BaseModel, Field
 
 
 class Document(BaseModel):

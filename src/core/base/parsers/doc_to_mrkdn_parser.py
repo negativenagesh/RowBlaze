@@ -1,8 +1,8 @@
 import logging
+import os
+import tempfile
 from io import BytesIO
 from typing import AsyncGenerator, List, Union
-import tempfile
-import os
 
 import pypandoc
 from docx import Document

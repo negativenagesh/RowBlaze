@@ -1,10 +1,11 @@
 import json
-import yaml
-from datetime import datetime
-from typing import Dict, Any, List, Optional, Set, Union
-from pydantic import BaseModel, Field, validator
 import os
+from datetime import datetime
 from pathlib import Path
+from typing import Any, Dict, List, Optional, Set, Union
+
+import yaml
+from pydantic import BaseModel, Field, validator
 
 
 class OntologyVersion(BaseModel):

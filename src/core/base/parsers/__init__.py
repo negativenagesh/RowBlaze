@@ -1,4 +1,4 @@
-from .base_parser import BaseParser, AsyncParser
+from .base_parser import AsyncParser, BaseParser
 from .csv_parser import CSVParser
 from .doc_parser import DOCParser
 from .docx_parser import DOCXParser

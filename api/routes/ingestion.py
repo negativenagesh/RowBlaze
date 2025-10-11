@@ -1,27 +1,28 @@
+import hashlib
+import json
+import logging
 import os
 import tempfile
-import hashlib
-import logging
-import json
-from typing import List
 from pathlib import Path
+from typing import List
+
+from elasticsearch import AsyncElasticsearch
 from fastapi import (
     APIRouter,
+    BackgroundTasks,
     Depends,
-    UploadFile,
     File,
     Form,
     HTTPException,
+    UploadFile,
     status,
-    BackgroundTasks,
 )
-from elasticsearch import AsyncElasticsearch
 from openai import AsyncOpenAI
 
-from api.models import IngestionRequest, IngestionResponse
 from api.dependencies import get_elasticsearch_client, get_openai_client
-from src.core.ingestion.rag_ingestion import example_run_file_processing
+from api.models import IngestionRequest, IngestionResponse
 from sdk.message import Message
+from src.core.ingestion.rag_ingestion import example_run_file_processing
 
 logger = logging.getLogger(__name__)
 router = APIRouter()

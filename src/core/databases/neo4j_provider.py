@@ -1,6 +1,8 @@
-from typing import Dict, List, Any, Optional, Union
 import os
+from typing import Any, Dict, List, Optional, Union
+
 import neo4j
+
 from .base import GraphDatabaseProvider
 
 

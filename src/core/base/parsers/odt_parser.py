@@ -1,14 +1,15 @@
-import os
-import logging
-from io import BytesIO
-from typing import AsyncGenerator, Optional, Any
 import base64
-import yaml
+import logging
+import os
+from io import BytesIO
 from pathlib import Path
+from typing import Any, AsyncGenerator, Optional
+
+import yaml
 from dotenv import load_dotenv
+from openai import AsyncOpenAI
 
 from .base_parser import AsyncParser
-from openai import AsyncOpenAI
 
 # Set up logging and environment
 logging.basicConfig(level=logging.INFO)
@@ -17,7 +18,7 @@ load_dotenv()
 
 # Check for odfpy installation
 try:
-    from odf import opendocument, text, table, draw, element
+    from odf import draw, element, opendocument, table, text
 
     ODFPY_INSTALLED = True
 except ImportError:

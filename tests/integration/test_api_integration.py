@@ -1,9 +1,10 @@
-import pytest
 import asyncio
-import httpx
 import os
-from unittest.mock import patch
 import sys
+from unittest.mock import patch
+
+import httpx
+import pytest
 
 # Add the project root to the Python path
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "../.."))

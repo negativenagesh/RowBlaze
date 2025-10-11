@@ -1,10 +1,11 @@
 import os
-from typing import Optional, AsyncGenerator
-from fastapi import Depends, HTTPException, status
-from elasticsearch import AsyncElasticsearch
-from openai import AsyncOpenAI
 from functools import lru_cache
+from typing import AsyncGenerator, Optional
+
 from dotenv import load_dotenv
+from elasticsearch import AsyncElasticsearch
+from fastapi import Depends, HTTPException, status
+from openai import AsyncOpenAI
 
 # Load environment variables
 load_dotenv()

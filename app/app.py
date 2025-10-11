@@ -1,15 +1,16 @@
-import os
-import requests
-import streamlit as st
-from pathlib import Path
-import json
-import time
-import sys
-from typing import List, Tuple
-import httpx
 import asyncio
+import json
+import os
+import sys
+import time
 import uuid
 from datetime import datetime, timedelta
+from pathlib import Path
+from typing import List, Tuple
+
+import httpx
+import requests
+import streamlit as st
 
 # CHANGE: safe import for cookie component
 try:
@@ -262,16 +263,16 @@ def apply_custom_css():
             color: #fafafa;
             font-family: 'Montserrat', 'Roboto', sans-serif;
         }
-        
+
         /* Force all main content area elements to use the same background */
-        .main, [data-testid="stAppViewContainer"], 
+        .main, [data-testid="stAppViewContainer"],
         .st-emotion-cache-1wrcr25, .st-emotion-cache-6qob1r,
         .st-emotion-cache-uf99v8, .st-emotion-cache-16txtl3,
         .st-emotion-cache-18ni7ap, .st-emotion-cache-1kyxreq {
             background-color: #2e2b2b !important;
             background: linear-gradient(90deg, rgba(46, 43, 43, 1) 100%, rgba(0, 212, 255, 1) 0%) !important;
         }
-        
+
         /* File uploader help text - make it wrap properly */
         .st-emotion-cache-16idsys p,
         .stFileUploadDropzone p,
@@ -282,31 +283,31 @@ def apply_custom_css():
             max-width: 100% !important;
             line-height: 1.4 !important;
         }
-        
+
         /* File uploader overall container formatting */
         [data-testid="stFileUploader"] {
             width: 100% !important;
             max-width: 100% !important;
         }
-        
+
         /* Add an appropriate margin below the help text */
-        .st-emotion-cache-16idsys, 
+        .st-emotion-cache-16idsys,
         .stFileUploadDropzone {
             margin-bottom: 12px !important;
         }
-        
+
         /* Main content containers */
         div[data-testid="stVerticalBlock"] {
             background-color: transparent !important;
         }
-        
+
         /* Chat container background */
         .chat-container {
             background-color: transparent !important;
         }
-        
+
         /* Enhanced chat input styling to match content area */
-        .stChatInputContainer, 
+        .stChatInputContainer,
         [data-testid="stChatInput"],
         [data-testid="stChatInput"] > div,
         [data-testid="stChatInput"] input,
@@ -315,14 +316,14 @@ def apply_custom_css():
             color: #fafafa !important;
             border-color: #3a7be0 !important;
         }
-        
+
         /* Specifically target the chat input background elements */
         .st-emotion-cache-1aumxhk {
             background-color: #2e2b2b !important;
         }
-        
+
         /* Sidebar specific styling with black gradient - keep as is */
-        .css-1d391kg, .css-1lcbmhc, .css-17eq0hr, .css-1y4p8pa, .css-12oz5g7, 
+        .css-1d391kg, .css-1lcbmhc, .css-17eq0hr, .css-1y4p8pa, .css-12oz5g7,
         section[data-testid="stSidebar"], .css-ng1t4o, .css-1cypcdb, .css-18e3th9 {
             background: #000000 !important;
             background: linear-gradient(90deg, rgba(0, 0, 0, 1) 100%, rgba(0, 212, 255, 1) 0%) !important;
@@ -333,50 +334,50 @@ def apply_custom_css():
             background: #000000 !important;
             background: linear-gradient(90deg, rgba(0, 0, 0, 1) 100%, rgba(0, 212, 255, 1) 0%) !important;
         }
-        
+
         /* Alternative sidebar selectors for different Streamlit versions */
         [data-testid="stSidebar"] > div:first-child {
             background: #000000 !important;
             background: linear-gradient(90deg, rgba(0, 0, 0, 1) 100%, rgba(0, 212, 255, 1) 0%) !important;
         }
-        
+
         /* Sidebar text color to ensure visibility on black background */
         .css-1d391kg, .css-1lcbmhc, .css-17eq0hr, .css-1y4p8pa, .css-12oz5g7,
         section[data-testid="stSidebar"] * {
             color: #fafafa !important;
         }
-        
+
         /* Sidebar headers */
-        section[data-testid="stSidebar"] h1, 
-        section[data-testid="stSidebar"] h2, 
+        section[data-testid="stSidebar"] h1,
+        section[data-testid="stSidebar"] h2,
         section[data-testid="stSidebar"] h3 {
             color: #ffffff !important;
         }
-        
+
         /* Sidebar text areas and inputs */
         section[data-testid="stSidebar"] .stTextArea textarea {
             background-color: #1a1a1a !important;
             color: #ffffff !important;
             border: 1px solid #3a7be0 !important;
         }
-        
+
         /* File uploader in sidebar */
         section[data-testid="stSidebar"] .stFileUploader {
             background-color: transparent !important;
         }
-        
+
         section[data-testid="stSidebar"] .stFileUploader > div {
             background-color: #1a1a1a !important;
             border: 1px solid #3a7be0 !important;
         }
-        
+
         /* Improved typography */
         body {
             font-family: 'Montserrat', 'Roboto', sans-serif;
             font-weight: 300;
             letter-spacing: 0.3px;
         }
-        
+
         /* Chat message styling - UPDATED */
         .user-message {
             background-color: #2d2d2d; /* Changed from #3a7be0 to match bot message color */
@@ -394,7 +395,7 @@ def apply_custom_css():
             font-weight: 400;
             box-shadow: 0 2px 5px rgba(0,0,0,0.2);
         }
-        
+
         .bot-message {
             background-color: #2d2d2d;
             color: #fafafa;
@@ -412,7 +413,7 @@ def apply_custom_css():
             line-height: 1.5;
             box-shadow: 0 2px 5px rgba(0,0,0,0.2);
         }
-        
+
         /* Input box styling */
         .stTextInput > div > div > input {
             border-radius: 20px;
@@ -424,11 +425,11 @@ def apply_custom_css():
             font-family: 'Montserrat', 'Roboto', sans-serif;
             font-weight: 300;
         }
-        
+
         .stTextInput > div > div > input:focus {
             box-shadow: 0 0 10px rgba(74, 139, 245, 0.5);
         }
-        
+
         /* Button styling */
         .stButton > button {
             border-radius: 20px;
@@ -441,12 +442,12 @@ def apply_custom_css():
             font-family: 'Montserrat', 'Roboto', sans-serif;
             letter-spacing: 0.5px;
         }
-        
+
         .stButton > button:hover {
             background-color: #2a6bd0;
             box-shadow: 0 0 8px rgba(74, 139, 245, 0.5);
         }
-        
+
         /* Header styling */
         h1, h2, h3 {
             color: white;
@@ -454,30 +455,30 @@ def apply_custom_css():
             font-weight: 500;
             letter-spacing: 0.5px;
         }
-        
+
         h1 {
             font-size: 2.2rem;
             font-weight: 600;
             letter-spacing: 1px;
         }
-        
+
         /* File uploader styling */
         .stFileUploader > div > button {
             background-color: #3a7be0;
             color: white;
             font-family: 'Montserrat', 'Roboto', sans-serif;
         }
-        
+
         /* Progress bar styling */
         .stProgress > div > div {
             background-color: #3a7be0;
         }
-        
+
         /* Spinner color */
         .stSpinner > div > div {
             border-color: #3a7be0 transparent transparent transparent;
         }
-        
+
         /* Chat container - scrollable area */
         .chat-container {
             max-height: 65vh;
@@ -486,13 +487,13 @@ def apply_custom_css():
             margin-bottom: 20px;
             border-radius: 10px;
         }
-        
+
         /* Logo styling */
         .logo-container {
             text-align: center;
             margin-bottom: 15px;
         }
-        
+
         /* Make sure code blocks look good */
         pre {
             background-color: #1e1e1e;
@@ -500,11 +501,11 @@ def apply_custom_css():
             padding: 10px;
             overflow-x: auto;
         }
-        
+
         code {
             color: #f8f8f2;
         }
-        
+
         /* File item styling for sidebar */
         .file-item {
             padding: 8px 12px;
@@ -515,13 +516,13 @@ def apply_custom_css():
             font-size: 0.9em;
             color: #ffffff !important;
         }
-        
+
         .file-count {
             color: #cccccc !important;
             font-size: 0.8em;
             margin-top: 5px;
         }
-        
+
         /* Add custom font imports */
         @import url('https://fonts.googleapis.com/css2?family=Montserrat:wght@300;400;500;600;700&display=swap');
 
@@ -535,34 +536,34 @@ def apply_custom_css():
             cursor: pointer;
             transition: all 0.2s ease;
         }
-        
+
         .chat-session:hover {
             background-color: #252525;
         }
-        
+
         .chat-session.active {
             background-color: #2a2a2a;
             border-left: 3px solid #5a9bff;
         }
-        
+
         .chat-session-title {
             font-weight: 500;
             white-space: nowrap;
             overflow: hidden;
             text-overflow: ellipsis;
         }
-        
+
         .chat-session-meta {
             font-size: 0.8em;
             color: #888;
         }
-        
+
         /* Delete button */
         .delete-btn {
             opacity: 0.6;
             transition: all 0.2s ease;
         }
-        
+
         .delete-btn:hover {
             opacity: 1;
             color: #ff5555;

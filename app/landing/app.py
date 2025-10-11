@@ -1,11 +1,12 @@
-import streamlit as st
-import sys
 import os
+import sys
 from pathlib import Path
 
+import streamlit as st
+
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from components.navbar import render_navbar
 from components.hero_section import render_hero_section
+from components.navbar import render_navbar
 
 # Set page config
 st.set_page_config(

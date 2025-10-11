@@ -3,8 +3,9 @@
 Simple health check script for Docker containers.
 """
 import sys
-import requests
 import time
+
+import requests
 
 
 def check_health(url, max_retries=3, retry_delay=1):

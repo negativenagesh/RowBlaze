@@ -72,6 +72,7 @@ dependencies = [
     "mypy",
     "isort",
     "neo4j>=6.0.2",
+    "pre-commit>=4.3.0",
 ]
 
 [project.optional-dependencies]
@@ -168,7 +169,7 @@ addopts = [
 ]
 markers = [
     "unit: Unit tests",
-    "integration: Integration tests", 
+    "integration: Integration tests",
     "e2e: End-to-end tests",
     "slow: Slow running tests"
 ]

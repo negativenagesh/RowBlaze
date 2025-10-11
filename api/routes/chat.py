@@ -1,9 +1,10 @@
 import logging
-from typing import List, Dict, Any, Optional
-from fastapi import APIRouter, Depends, HTTPException, status
-from elasticsearch import AsyncElasticsearch
-from pydantic import BaseModel, Field
 from datetime import datetime
+from typing import Any, Dict, List, Optional
+
+from elasticsearch import AsyncElasticsearch
+from fastapi import APIRouter, Depends, HTTPException, status
+from pydantic import BaseModel, Field
 
 from api.dependencies import get_elasticsearch_client
 
