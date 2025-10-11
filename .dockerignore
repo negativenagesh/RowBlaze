@@ -1,0 +1,36 @@
+# Version control
+.git
+.gitignore
+
+# Python cache files
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Virtual environments
+.env
+.venv
+env/
+venv/
+ENV/
+
+# IDE specific files
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Large files and directories not needed in container
+.github/
+docs/
+tests/
+
+# Logs
+*.log
+
+# Local development files
+*.db
+*.sqlite3
