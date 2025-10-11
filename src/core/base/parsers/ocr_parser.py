@@ -9,15 +9,18 @@ logger = logging.getLogger(__name__)
 
 try:
     from pdf2image import convert_from_bytes
+
     PYPDF2IMAGE_INSTALLED = True
 except ImportError:
     PYPDF2IMAGE_INSTALLED = False
 
 try:
     import pytesseract
+
     PYTESSERACT_INSTALLED = True
 except ImportError:
     PYTESSERACT_INSTALLED = False
+
 
 class OCRParser(AsyncParser[bytes]):
     """A parser for OCR-based text extraction from PDF files."""
@@ -42,15 +45,21 @@ class OCRParser(AsyncParser[bytes]):
                 page_num = i + 1
                 try:
                     # Perform OCR on the image in a separate thread to avoid blocking asyncio event loop
-                    page_text = await asyncio.to_thread(pytesseract.image_to_string, image)
+                    page_text = await asyncio.to_thread(
+                        pytesseract.image_to_string, image
+                    )
                     if not page_text or not page_text.strip():
                         logger.warning(f"OCR found no text on page {page_num}.")
                     yield page_text
                 except pytesseract.TesseractNotFoundError:
-                    logger.error("Tesseract executable not found. Please install Tesseract-OCR and ensure it's in your system's PATH.")
+                    logger.error(
+                        "Tesseract executable not found. Please install Tesseract-OCR and ensure it's in your system's PATH."
+                    )
                     raise
                 except Exception as ocr_err:
-                    logger.error(f"Error during OCR on page {page_num}: {ocr_err}", exc_info=True)
+                    logger.error(
+                        f"Error during OCR on page {page_num}: {ocr_err}", exc_info=True
+                    )
                     yield ""
         except Exception as e:
             logger.error(f"Failed to convert PDF to images for OCR: {e}", exc_info=True)

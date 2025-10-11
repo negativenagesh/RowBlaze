@@ -1,12 +1,14 @@
 import logging
 from typing import Any, Dict, Optional
 
+
 # --- Base Tool Definition ---
 # This base class provides a standard structure for all tools.
 class Tool:
     """
     Base class for tools that can be used by an agent.
     """
+
     def __init__(self, name: str, description: str, parameters: Dict[str, Any]):
         """
         Initializes the Tool.
@@ -31,7 +33,9 @@ class Tool:
             context: The context to set.
         """
         self.context = context
-        logger.debug(f"Context set for tool '{self.name}': {type(context).__name__ if context else 'None'}")
+        logger.debug(
+            f"Context set for tool '{self.name}': {type(context).__name__ if context else 'None'}"
+        )
 
     async def execute(self, *args: Any, **kwargs: Any) -> Any:
         """
@@ -45,9 +49,10 @@ class Tool:
             f"The 'execute' method must be implemented by subclasses of Tool (e.g., {self.__class__.__name__})."
         )
 
+
 # --- End Base Tool Definition ---
 
-from ...core.base.abstractions import AggregateSearchResult # Relative import
+from ...core.base.abstractions import AggregateSearchResult  # Relative import
 
 logger = logging.getLogger(__name__)
 
@@ -85,7 +90,9 @@ class SearchFileKnowledgeTool(Tool):
 
     # set_context method is inherited from the base Tool class
 
-    async def execute(self, query: str, *args: Any, **kwargs: Any) -> AggregateSearchResult:
+    async def execute(
+        self, query: str, *args: Any, **kwargs: Any
+    ) -> AggregateSearchResult:
         """
         Calls the knowledge_search_method from the provided context (the agent)
         to search for chunks and KG data related to the query. This method delegates
@@ -101,27 +108,29 @@ class SearchFileKnowledgeTool(Tool):
 
         if not self.context:
             logger.error(f"No context provided for {self.name}. Cannot execute search.")
-            return AggregateSearchResult(query=query) # Return empty result with query
+            return AggregateSearchResult(query=query)  # Return empty result with query
 
         if not hasattr(self.context, "knowledge_search_method"):
             logger.error(
                 f"'knowledge_search_method' not found in the context ({type(self.context).__name__}) for {self.name}."
             )
-            return AggregateSearchResult(query=query) # Return empty result with query
+            return AggregateSearchResult(query=query)  # Return empty result with query
 
         try:
             # Retrieve agent's configuration to pass to the search method if needed.
             # The StaticResearchAgent.knowledge_search_method expects an agent_config parameter.
-            agent_config_for_tool = getattr(self.context, 'config', {})
-            if not agent_config_for_tool and hasattr(self.context, 'get_config'): # Fallback if config is a method
+            agent_config_for_tool = getattr(self.context, "config", {})
+            if not agent_config_for_tool and hasattr(
+                self.context, "get_config"
+            ):  # Fallback if config is a method
                 agent_config_for_tool = self.context.get_config()
-
 
             # Call the agent's knowledge_search_method. This method uses the RAGFusionRetriever,
             # which contains the semantic search logic for your new mappings.
-            result_object: AggregateSearchResult = await self.context.knowledge_search_method(
-                query=query,
-                agent_config=agent_config_for_tool
+            result_object: AggregateSearchResult = (
+                await self.context.knowledge_search_method(
+                    query=query, agent_config=agent_config_for_tool
+                )
             )
 
             logger.info(
@@ -132,24 +141,29 @@ class SearchFileKnowledgeTool(Tool):
 
             # If the context (agent) has a results collector, add the structured result.
             # This is optional and depends on the agent's design for internal state/logging.
-            if hasattr(self.context, "search_results_collector") and \
-               hasattr(self.context.search_results_collector, "add_aggregate_result"):
+            if hasattr(self.context, "search_results_collector") and hasattr(
+                self.context.search_results_collector, "add_aggregate_result"
+            ):
                 try:
                     # Assuming add_aggregate_result can take the AggregateSearchResult directly
-                    self.context.search_results_collector.add_aggregate_result(result_object)
-                    logger.debug(f"Result for query '{query}' added to agent's search_results_collector.")
+                    self.context.search_results_collector.add_aggregate_result(
+                        result_object
+                    )
+                    logger.debug(
+                        f"Result for query '{query}' added to agent's search_results_collector."
+                    )
                 except Exception as e_collector:
                     logger.warning(
                         f"Failed to add result to search_results_collector for query '{query}': {e_collector}",
-                        exc_info=True
+                        exc_info=True,
                     )
-            
+
             return result_object
 
         except Exception as e:
             logger.error(
                 f"Error during {self.name} execution for query '{query}': {e}",
-                exc_info=True
+                exc_info=True,
             )
             # Return an empty AggregateSearchResult associated with the query in case of an error
             return AggregateSearchResult(query=query)

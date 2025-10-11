@@ -6,6 +6,7 @@ from .base_parser import AsyncParser
 
 logger = logging.getLogger(__name__)
 
+
 class TextParser(AsyncParser[bytes]):
     """A parser for raw text data from .txt files."""
 
@@ -24,7 +25,9 @@ class TextParser(AsyncParser[bytes]):
             if text_content and text_content.strip():
                 yield text_content
             else:
-                logger.warning("Provided text data is empty or contains only whitespace.")
+                logger.warning(
+                    "Provided text data is empty or contains only whitespace."
+                )
                 # Yield nothing if the content is empty
                 return
         except Exception as e:

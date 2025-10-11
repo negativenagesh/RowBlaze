@@ -1,8 +1,9 @@
 import streamlit as st
 
+
 def render_hero_section():
     """Renders the hero section HTML for the RowBlaze landing page."""
-    
+
     # Hero section HTML with updated content and a direct link to the app
     hero_html = """
     <div id="hero-section" class="hero-container">
@@ -35,5 +36,5 @@ def render_hero_section():
         </div>
     </div>
     """
-    
+
     return hero_html

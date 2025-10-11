@@ -1,5 +1,6 @@
 from bson import ObjectId
 
+
 class Messages:
     def __init__(self, message, ignore=False):
         self.message = message

@@ -7,6 +7,7 @@ from .base_parser import AsyncParser
 
 logger = logging.getLogger(__name__)
 
+
 class CSVParser(AsyncParser[bytes]):
     """A parser for CSV data that automatically detects delimiters."""
 
@@ -18,12 +19,12 @@ class CSVParser(AsyncParser[bytes]):
         """Detects the delimiter from a sample of the data."""
         try:
             sniffer = csv.Sniffer()
-            #Sniff with a common set of delimiters
-            dialect = sniffer.sniff(sample_data, delimiters=',;\t|')
+            # Sniff with a common set of delimiters
+            dialect = sniffer.sniff(sample_data, delimiters=",;\t|")
             return dialect.delimiter
         except csv.Error:
             logger.warning("CSV Sniffer could not detect delimiter, defaulting to ','.")
-            return ','
+            return ","
 
     async def ingest(self, data: bytes, **kwargs) -> AsyncGenerator[str, None]:
         """Ingest CSV data and yield each row as a comma-separated string."""
@@ -42,7 +43,7 @@ class CSVParser(AsyncParser[bytes]):
             if not sample_for_sniffing.strip():
                 logger.warning("CSV file appears to be empty. No data to process.")
                 return
-                
+
             delimiter = self._get_delimiter(sample_for_sniffing)
             logger.info(f"Detected CSV delimiter: '{delimiter}'")
 
@@ -55,7 +56,7 @@ class CSVParser(AsyncParser[bytes]):
                 yield ", ".join(header)
 
             for row in csv_reader:
-                #Filter out completely empty rows
+                # Filter out completely empty rows
                 if any(field.strip() for field in row):
                     yield ", ".join(str(field) for field in row)
 

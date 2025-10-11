@@ -1,6 +1,6 @@
 import logging
 from io import BytesIO
-from typing import AsyncGenerator,List
+from typing import AsyncGenerator, List
 
 import networkx as nx
 import numpy as np
@@ -33,6 +33,7 @@ class XLSXParser(AsyncParser[bytes]):
             logger.error(f"Failed to read or process XLSX file: {e}", exc_info=True)
             raise ValueError(f"Error processing XLSX file: {str(e)}") from e
 
+
 class XLSXParserAdvanced(AsyncParser[bytes]):
     """
     An advanced XLSX parser that identifies and extracts distinct data tables
@@ -46,11 +47,11 @@ class XLSXParserAdvanced(AsyncParser[bytes]):
     def _find_connected_components(self, arr: np.ndarray):
         """Identifies and yields connected components from a numpy array of cells."""
         graph = nx.grid_2d_graph(arr.shape[0], arr.shape[1])
-        
+
         # Remove nodes corresponding to empty cells
         empty_cells = list(zip(*np.where(arr == None), strict=False))
         graph.remove_nodes_from(empty_cells)
-        
+
         for component in nx.connected_components(graph):
             if not component:
                 continue
@@ -68,15 +69,23 @@ class XLSXParserAdvanced(AsyncParser[bytes]):
             workbook = openpyxl.load_workbook(filename=BytesIO(data))
             for ws in workbook.worksheets:
                 # Convert sheet to numpy array for processing
-                ws_data = np.array([[cell.value for cell in row] for row in ws.iter_rows()], dtype=object)
-                
+                ws_data = np.array(
+                    [[cell.value for cell in row] for row in ws.iter_rows()],
+                    dtype=object,
+                )
+
                 for table in self._find_connected_components(ws_data):
                     if table.size == 0:
                         continue
-                    
+
                     # Yield each row of the identified table as a string
                     for row in table:
                         yield ", ".join(row)
         except Exception as e:
-            logger.error(f"Failed to read or process XLSX file with advanced parser: {e}", exc_info=True)
-            raise ValueError(f"Error processing XLSX file with advanced parser: {str(e)}") from e
+            logger.error(
+                f"Failed to read or process XLSX file with advanced parser: {e}",
+                exc_info=True,
+            )
+            raise ValueError(
+                f"Error processing XLSX file with advanced parser: {str(e)}"
+            ) from e

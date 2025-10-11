@@ -14,6 +14,7 @@ from .base_parser import AsyncParser
 
 logger = logging.getLogger(__name__)
 
+
 class DOCParser(AsyncParser[bytes]):
     """
     A parser for DOC (legacy Microsoft Word) data.
@@ -42,9 +43,7 @@ class DOCParser(AsyncParser[bytes]):
                 tmp_docx_path = temp.name
 
             # 1. Convert .doc bytes to a temporary .docx file using pandoc
-            pypandoc.convert_text(
-                data, "docx", format="docx", outputfile=tmp_docx_path
-            )
+            pypandoc.convert_text(data, "docx", format="docx", outputfile=tmp_docx_path)
 
             # Read the converted file back into memory
             with open(tmp_docx_path, "rb") as f:
@@ -70,7 +69,7 @@ class DOCParser(AsyncParser[bytes]):
         except Exception as e:
             logger.error(f"Error processing DOC file: {str(e)}", exc_info=True)
             if "pandoc" in str(e).lower() and "not found" in str(e).lower():
-                 raise RuntimeError(
+                raise RuntimeError(
                     "Pandoc not found. Please install pandoc and ensure it is in your system's PATH."
                 ) from e
             raise ValueError(f"Error processing DOC file: {str(e)}") from e
@@ -86,7 +85,7 @@ class DOCParser(AsyncParser[bytes]):
 
         # Extract header from the first row
         header_cells = [cell.text.strip() for cell in table.rows[0].cells]
-        
+
         # Skip empty tables
         if not any(header_cells):
             return ""
@@ -98,5 +97,5 @@ class DOCParser(AsyncParser[bytes]):
         for row in table.rows[1:]:
             row_cells = [cell.text.strip() for cell in row.cells]
             markdown += "| " + " | ".join(row_cells) + " |\n"
-            
+
         return markdown

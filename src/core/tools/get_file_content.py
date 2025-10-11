@@ -6,12 +6,14 @@ from elasticsearch import AsyncElasticsearch
 
 logger = logging.getLogger(__name__)
 
+
 # --- Base Tool Definition ---
 # In a larger system, this Tool base class would ideally live in a shared abstractions module.
 class Tool:
     """
     Base class for tools that can be used by an agent.
     """
+
     def __init__(self, name: str, description: str, parameters: Dict[str, Any]):
         self.name = name
         self.description = description
@@ -20,12 +22,15 @@ class Tool:
 
     def set_context(self, context: Any):
         self.context = context
-        logger.debug(f"Context set for tool '{self.name}': {type(context).__name__ if context else 'None'}")
+        logger.debug(
+            f"Context set for tool '{self.name}': {type(context).__name__ if context else 'None'}"
+        )
 
     async def execute(self, *args: Any, **kwargs: Any) -> Any:
         raise NotImplementedError(
             f"The 'execute' method must be implemented by subclasses of Tool (e.g., {self.__class__.__name__})."
         )
+
 
 # --- End Base Tool Definition ---
 
@@ -43,7 +48,7 @@ class GetFileContentTool(Tool):
                 "Fetches and concatenates all text chunks for a specified document_id from the knowledge base. "
                 "Use this to retrieve the full available text content of a document when its ID is known."
             ),
-            parameters={ # OpenAPI schema for parameters
+            parameters={  # OpenAPI schema for parameters
                 "type": "object",
                 "properties": {
                     "document_id": {
@@ -88,34 +93,36 @@ class GetFileContentTool(Tool):
         max_chunks_to_fetch = 1000
 
         query_body = {
-            "query": {
-                "term": {
-                    "metadata.doc_id.keyword": document_id
-                }
-            },
+            "query": {"term": {"metadata.doc_id.keyword": document_id}},
             "sort": [
                 {"metadata.page_number": "asc"},
-                {"metadata.chunk_index_in_page": "asc"}
+                {"metadata.chunk_index_in_page": "asc"},
             ],
             "_source": ["chunk_text"],
-            "size": max_chunks_to_fetch
+            "size": max_chunks_to_fetch,
         }
 
-        logger.debug(f"Elasticsearch query for {self.name}: {json.dumps(query_body, indent=2)}")
+        logger.debug(
+            f"Elasticsearch query for {self.name}: {json.dumps(query_body, indent=2)}"
+        )
 
         try:
-            response = await es_client.search(
-                index=index_name,
-                body=query_body
-            )
+            response = await es_client.search(index=index_name, body=query_body)
         except Exception as e:
-            logger.error(f"Elasticsearch query failed for document_id '{document_id}': {e}", exc_info=True)
-            return f"Error: Failed to query Elasticsearch for document_id '{document_id}'."
+            logger.error(
+                f"Elasticsearch query failed for document_id '{document_id}': {e}",
+                exc_info=True,
+            )
+            return (
+                f"Error: Failed to query Elasticsearch for document_id '{document_id}'."
+            )
 
         hits = response.get("hits", {}).get("hits", [])
 
         if not hits:
-            logger.warning(f"No content chunks found for document_id: {document_id} in index {index_name}.")
+            logger.warning(
+                f"No content chunks found for document_id: {document_id} in index {index_name}."
+            )
             return f"No content found for document ID: {document_id}."
 
         if len(hits) == max_chunks_to_fetch:
@@ -131,10 +138,14 @@ class GetFileContentTool(Tool):
         ]
 
         if not all_chunk_texts:
-            logger.warning(f"Found {len(hits)} hits for document_id '{document_id}', but no 'chunk_text' could be extracted.")
+            logger.warning(
+                f"Found {len(hits)} hits for document_id '{document_id}', but no 'chunk_text' could be extracted."
+            )
             return f"Content found for document ID: {document_id}, but text extraction failed."
 
         full_content = "\n\n---\n\n".join(all_chunk_texts)
-        logger.info(f"Successfully retrieved and concatenated {len(all_chunk_texts)} chunks for document_id: {document_id}.")
+        logger.info(
+            f"Successfully retrieved and concatenated {len(all_chunk_texts)} chunks for document_id: {document_id}."
+        )
 
         return full_content

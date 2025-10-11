@@ -10,11 +10,13 @@ import httpx
 import asyncio
 import uuid
 from datetime import datetime, timedelta
+
 # CHANGE: safe import for cookie component
 try:
     import extra_streamlit_components as stx
 except Exception:
     stx = None
+
 
 # Add this function at the top of your file to create a global cookie manager
 def get_cookie_manager():
@@ -23,19 +25,31 @@ def get_cookie_manager():
         if stx is None:
             # Fallback when extra_streamlit_components isn't available
             class DummyCookieManager:
-                def get(self, key): return None
-                def set(self, key, value, **kwargs): pass
+                def get(self, key):
+                    return None
+
+                def set(self, key, value, **kwargs):
+                    pass
+
             return DummyCookieManager()
         if "cookie_manager" not in st.session_state:
             # Ensure component is created with a stable key
-            st.session_state.cookie_manager = stx.CookieManager(key="global_cookie_manager")
+            st.session_state.cookie_manager = stx.CookieManager(
+                key="global_cookie_manager"
+            )
         return st.session_state.cookie_manager
     except Exception as e:
         print(f"Error initializing cookie manager: {e}")
+
         class DummyCookieManager:
-            def get(self, key): return None
-            def set(self, key, value, **kwargs): pass
+            def get(self, key):
+                return None
+
+            def set(self, key, value, **kwargs):
+                pass
+
         return DummyCookieManager()
+
 
 API_URL = os.getenv("ROWBLAZE_API_URL", "http://localhost:8000/api")
 
@@ -43,14 +57,15 @@ st.set_page_config(
     page_title="RowBlaze",
     page_icon="🗿",
     layout="wide",
-    initial_sidebar_state="expanded"
+    initial_sidebar_state="expanded",
 )
+
 
 # Update get_session_id to use the global cookie manager
 def get_session_id():
     """Get a unique session ID from cookie or generate a new one."""
     cookie_manager = get_cookie_manager()
-    
+
     if "session_id" not in st.session_state:
         # Check if we have a cookie
         session_id = cookie_manager.get("rowblaze_session")
@@ -60,9 +75,14 @@ def get_session_id():
             # Generate a new UUID
             st.session_state.session_id = str(uuid.uuid4())
             # Set cookie for next time
-            cookie_manager.set("rowblaze_session", st.session_state.session_id, expires_at=datetime.now() + timedelta(days=30))
-    
+            cookie_manager.set(
+                "rowblaze_session",
+                st.session_state.session_id,
+                expires_at=datetime.now() + timedelta(days=30),
+            )
+
     return st.session_state.session_id
+
 
 async def save_chat_history(session_id, messages):
     """Save chat history to the API."""
@@ -72,27 +92,28 @@ async def save_chat_history(session_id, messages):
             {
                 "role": msg["role"],
                 "content": msg["content"],
-                "timestamp": datetime.now().isoformat()
+                "timestamp": datetime.now().isoformat(),
             }
             for msg in messages
         ]
-        
+
         # Create payload
         payload = {
             "session_id": session_id,
             "messages": api_messages,
-            "timestamp": datetime.now().isoformat()
+            "timestamp": datetime.now().isoformat(),
         }
-        
+
         # Call API
         async with httpx.AsyncClient(timeout=10.0) as client:
             response = await client.post(f"{API_URL}/chat/save", json=payload)
             response.raise_for_status()
             return True
-    
+
     except Exception as e:
         print(f"Error saving chat history: {e}")
         return False
+
 
 async def load_chat_history(session_id):
     """Load chat history from the API."""
@@ -101,21 +122,23 @@ async def load_chat_history(session_id):
             response = await client.get(f"{API_URL}/chat/{session_id}")
             response.raise_for_status()
             result = response.json()
-            
+
             if result.get("success"):
                 # Convert API messages to app format
                 return [
                     {"role": msg["role"], "content": msg["content"]}
                     for msg in result.get("messages", [])
                 ]
-            
+
             return []
-            
+
     except Exception as e:
         print(f"Error loading chat history: {e}")
         return []
 
+
 # Add these functions to your app.py
+
 
 async def load_chat_sessions():
     """Load all chat sessions from the API."""
@@ -124,15 +147,16 @@ async def load_chat_sessions():
             response = await client.get(f"{API_URL}/chat/list/sessions")
             response.raise_for_status()
             result = response.json()
-            
+
             if result.get("success"):
                 return result.get("sessions", [])
-            
+
             return []
-            
+
     except Exception as e:
         print(f"Error loading chat sessions: {e}")
         return []
+
 
 async def delete_chat_session(session_id):
     """Delete a chat session from the API."""
@@ -141,12 +165,13 @@ async def delete_chat_session(session_id):
             response = await client.delete(f"{API_URL}/chat/{session_id}")
             response.raise_for_status()
             result = response.json()
-            
+
             return result.get("success", False)
-            
+
     except Exception as e:
         print(f"Error deleting chat session: {e}")
         return False
+
 
 def initialize_session_state():
     """Initialize session state variables for chat history and settings."""
@@ -157,7 +182,9 @@ def initialize_session_state():
     if "initialized" not in st.session_state:
         st.session_state.initialized = True
         st.session_state.index_name = "rowblaze"
-        st.session_state.selected_model = os.getenv("OPENAI_MODEL", "gpt-4o-mini-2024-07-18")
+        st.session_state.selected_model = os.getenv(
+            "OPENAI_MODEL", "gpt-4o-mini-2024-07-18"
+        )
         st.session_state.processing = False
         st.session_state.is_processing_file = False
         st.session_state.upload_message = ""
@@ -168,18 +195,18 @@ def initialize_session_state():
         st.session_state.sessions_last_fetched = 0
         st.session_state.active_session_id = session_id
         st.session_state.messages = []
-        st.session_state.load_history_flag = True # Load history on first run
+        st.session_state.load_history_flag = True  # Load history on first run
         st.session_state.file_uploader_key = "file_uploader_0"
         st.session_state.user_input = ""
 
         # Initial health check
         try:
             response = requests.get(f"{API_URL}/health")
-            st.session_state.index_checked = (response.status_code == 200)
+            st.session_state.index_checked = response.status_code == 200
         except Exception as e:
             print(f"Error checking API health: {e}")
             st.session_state.index_checked = False
-    
+
     # Add chat sessions state
     if "chat_sessions" not in st.session_state:
         st.session_state.chat_sessions = []
@@ -194,7 +221,7 @@ def initialize_session_state():
     if "messages" not in st.session_state:
         st.session_state.messages = []
         # Don't automatically set load_history_flag = True
-    
+
     if "load_history_flag" not in st.session_state:
         st.session_state.load_history_flag = False
 
@@ -213,7 +240,7 @@ def initialize_session_state():
         except Exception as e:
             print(f"Error checking API health: {e}")
             st.session_state.index_checked = False
-    
+
     if "file_uploader_key" not in st.session_state:
         st.session_state.file_uploader_key = "uploaded_file_0"
 
@@ -221,10 +248,12 @@ def initialize_session_state():
     if "user_input" not in st.session_state:
         st.session_state.user_input = ""
 
+
 # Add your existing CSS styling function here
 def apply_custom_css():
     """Apply custom CSS for Grok-inspired UI."""
-    st.markdown("""
+    st.markdown(
+        """
     <style>
         /* Main theme - updated background with gradient */
         .stApp {
@@ -559,12 +588,15 @@ def apply_custom_css():
             background-color: #3a7be0 !important;
         }
     </style>
-    """, unsafe_allow_html=True)
+    """,
+        unsafe_allow_html=True,
+    )
+
 
 def display_header():
     """Display header with only the image logo on left side, medium size."""
     col1, col2 = st.columns([1, 3])  # 1:3 ratio gives logo ~25% width on left
-    
+
     with col1:  # Left column
         logo_path = Path(__file__).parent / "assets" / "image.png"
         if logo_path.exists():
@@ -572,7 +604,7 @@ def display_header():
             st.image(str(logo_path), width=350)
         else:
             st.markdown("<div style='font-size:42px'>🗿</div>", unsafe_allow_html=True)
-    
+
 
 def display_chat_messages():
     """Display chat messages from history."""
@@ -590,13 +622,20 @@ def display_chat_messages():
     #     </div>
     #     """, unsafe_allow_html=True)
     #     return
-        
+
     # Display existing messages
     for message in st.session_state.messages:
         if message["role"] == "user":
-            st.markdown(f'<div class="user-message">{message["content"]}</div>', unsafe_allow_html=True)
+            st.markdown(
+                f'<div class="user-message">{message["content"]}</div>',
+                unsafe_allow_html=True,
+            )
         else:
-            st.markdown(f'<div class="bot-message">{message["content"]}</div>', unsafe_allow_html=True)
+            st.markdown(
+                f'<div class="bot-message">{message["content"]}</div>',
+                unsafe_allow_html=True,
+            )
+
 
 async def process_query(query: str):
     """Process a user query and get response from RAG system using the API."""
@@ -606,27 +645,30 @@ async def process_query(query: str):
             "question": query,
             "index_name": st.session_state.index_name,
             "top_k_chunks": st.session_state.get("top_k_chunks", 5),
-            "enable_references_citations": st.session_state.get("enable_citations", True),
+            "enable_references_citations": st.session_state.get(
+                "enable_citations", True
+            ),
             "deep_research": st.session_state.get("deep_research", False),
             "auto_chunk_sizing": st.session_state.get("auto_chunk_sizing", True),
             "model": st.session_state.selected_model,
-            "max_tokens": MODEL_TOKEN_LIMITS[st.session_state.selected_model]
+            "max_tokens": MODEL_TOKEN_LIMITS[st.session_state.selected_model],
         }
-        
+
         # Call the retrieval API
         async with httpx.AsyncClient(timeout=300.0) as client:
             response = await client.post(f"{API_URL}/query", json=payload)
             response.raise_for_status()
             result = response.json()
-            
+
             return result.get("answer", "No answer generated")
-            
+
     except httpx.RequestError as e:
         return f"Error: Request to API failed: {str(e)}"
     except httpx.HTTPStatusError as e:
         return f"Error: API returned {e.response.status_code}: {e.response.text}"
     except Exception as e:
         return f"An unexpected error occurred: {str(e)}"
+
 
 async def process_file_upload(uploaded_file):
     """Process an uploaded file using the API."""
@@ -635,91 +677,106 @@ async def process_file_upload(uploaded_file):
         files = {"file": (uploaded_file.name, uploaded_file.getvalue())}
         data = {
             "index_name": st.session_state.index_name,
-            "description": st.session_state.get("doc_description", f"Uploaded document: {uploaded_file.name}"),
+            "description": st.session_state.get(
+                "doc_description", f"Uploaded document: {uploaded_file.name}"
+            ),
             "is_ocr_pdf": str(st.session_state.get("is_ocr_pdf", False)).lower(),
-            "is_structured_pdf": str(st.session_state.get("is_structured_pdf", False)).lower(),
+            "is_structured_pdf": str(
+                st.session_state.get("is_structured_pdf", False)
+            ).lower(),
             "model": st.session_state.selected_model,
-            "max_tokens": str(MODEL_TOKEN_LIMITS[st.session_state.selected_model])
+            "max_tokens": str(MODEL_TOKEN_LIMITS[st.session_state.selected_model]),
         }
-        
+
         # Make API call
         async with httpx.AsyncClient(timeout=60.0) as client:
             response = await client.post(f"{API_URL}/ingest", files=files, data=data)
-            
+
             if response.status_code == 200:
                 result = response.json()
-                
+
                 # Refresh the indexed files list after successful upload
-                files_response = await client.get(f"{API_URL}/files/{st.session_state.index_name}")
+                files_response = await client.get(
+                    f"{API_URL}/files/{st.session_state.index_name}"
+                )
                 if files_response.status_code == 200:
                     st.session_state.indexed_files = files_response.json()
                     st.session_state.files_last_fetched = time.time()
-                
+
                 return True, result.get("message", "Successfully processed and indexed")
             else:
-                return False, f"Error: API returned status {response.status_code}: {response.text}"
-                
+                return (
+                    False,
+                    f"Error: API returned status {response.status_code}: {response.text}",
+                )
+
     except Exception as e:
         return False, f"Processing failed: {str(e)}"
+
 
 def handle_chat_input():
     """Handle user chat input submission."""
     # Get the input but don't try to clear it directly
     user_query = st.session_state.user_input
-    
+
     if user_query.strip():
         # Add user message to chat
         st.session_state.messages.append({"role": "user", "content": user_query})
-        
+
         # Set processing flag to display spinner
         st.session_state.processing = True
-        
+
         # Store query for processing
         st.session_state.current_query = user_query
-        
+
         # Flag to save history
         st.session_state.save_history = True
+
 
 def handle_file_upload():
     """Handle file upload from the sidebar."""
     uploaded_file = st.session_state.get("uploaded_file")
-    
+
     if uploaded_file:
         st.session_state.upload_status = "Processing..."
-        
+
         with st.spinner("Processing document..."):
             success, message = asyncio.run(process_file_upload(uploaded_file))
-        
+
         if success:
             st.session_state.upload_status = "✅ " + message
         else:
             st.session_state.upload_status = "🔄" + message
 
+
 def clear_chat():
     """Clear the chat history."""
     st.session_state.messages = []
+
 
 MODEL_TOKEN_LIMITS = {
     "gpt-4o-mini-2024-07-18": 16384,
     "gpt-4.1-nano-2025-04-14": 32768,
     "gpt-5-nano-2025-08-07": 128000,
-    "gpt-oss-120b": 131072
+    "gpt-oss-120b": 131072,
 }
+
 
 def create_new_chat():
     """Create a new chat session."""
     # Generate a new session ID
     st.session_state.active_session_id = str(uuid.uuid4())
-    
+
     # Mark as a new session so we don't try to load history
     st.session_state.new_session = True
-    
+
     # Clear messages
     st.session_state.messages = []
     st.session_state.load_history_flag = False
-    
+
     # Refresh the page
     st.rerun()
+
 
 def main():
     # --- 1. INITIALIZATION ---
@@ -734,14 +791,18 @@ def main():
     if st.session_state.load_history_flag:
         try:
             with st.spinner("Loading conversation..."):
-                messages = asyncio.run(load_chat_history(st.session_state.active_session_id))
+                messages = asyncio.run(
+                    load_chat_history(st.session_state.active_session_id)
+                )
                 st.session_state.messages = messages
-                print(f"Loaded {len(messages)} messages for session {st.session_state.active_session_id}")
+                print(
+                    f"Loaded {len(messages)} messages for session {st.session_state.active_session_id}"
+                )
         except Exception as e:
             print(f"Error loading chat history: {e}")
-            st.session_state.messages = [] # Default to empty on error
+            st.session_state.messages = []  # Default to empty on error
         finally:
-            st.session_state.load_history_flag = False # Always reset the flag
+            st.session_state.load_history_flag = False  # Always reset the flag
 
     # Refresh chat sessions list periodically
     if time.time() - st.session_state.sessions_last_fetched > 60:
@@ -762,14 +823,17 @@ def main():
             # Display status message for uploads
             if st.session_state.upload_message:
                 icon = "✅" if st.session_state.upload_success else "❌"
-                st.markdown(f"""
+                st.markdown(
+                    f"""
                 <div style="padding: 10px; border-radius: 5px;
                     background-color: {'#1a3d1a' if st.session_state.upload_success else '#5c1c1c'};
                     border-left: 3px solid {'#4CAF50' if st.session_state.upload_success else '#f44336'};
                     margin-bottom: 15px;">
                     {icon} {st.session_state.upload_message}
                 </div>
-                """, unsafe_allow_html=True)
+                """,
+                    unsafe_allow_html=True,
+                )
 
             # Model selection and other options...
             # (Your existing code for model selection, checkboxes, etc. is fine here)
@@ -782,9 +846,26 @@ def main():
             # --- REFACTORED FILE UPLOADER ---
             uploaded_file = st.file_uploader(
                 "Upload a file",
-                type=["pdf", "doc", "docx", "txt", "odt", "xlsx", "csv", "jpg", "jpeg", "png", "gif", "bmp", "webp", "heic", "tiff", "tif"],
+                type=[
+                    "pdf",
+                    "doc",
+                    "docx",
+                    "txt",
+                    "odt",
+                    "xlsx",
+                    "csv",
+                    "jpg",
+                    "jpeg",
+                    "png",
+                    "gif",
+                    "bmp",
+                    "webp",
+                    "heic",
+                    "tiff",
+                    "tif",
+                ],
                 key=st.session_state.file_uploader_key,
-                label_visibility="collapsed"
+                label_visibility="collapsed",
             )
 
             if uploaded_file:
@@ -793,10 +874,14 @@ def main():
                     try:
                         # Check if file already exists
                         if uploaded_file.name in st.session_state.indexed_files:
-                            raise ValueError(f"File '{uploaded_file.name}' already exists.")
+                            raise ValueError(
+                                f"File '{uploaded_file.name}' already exists."
+                            )
 
                         # Process the file
-                        success, message = asyncio.run(process_file_upload(uploaded_file))
+                        success, message = asyncio.run(
+                            process_file_upload(uploaded_file)
+                        )
                         st.session_state.upload_success = success
                         st.session_state.upload_message = message
 
@@ -816,10 +901,11 @@ def main():
                 st.session_state.is_processing_file = False
                 st.rerun()
 
-
             # --- REFACTORED FILE LIST & REFRESH ---
             st.markdown("### Files in Index")
-            if st.button("🔄 Refresh List", disabled=st.session_state.is_processing_file):
+            if st.button(
+                "🔄 Refresh List", disabled=st.session_state.is_processing_file
+            ):
                 with st.spinner("Refreshing..."):
                     try:
                         st.session_state.indexed_files = asyncio.run(fetch_files())
@@ -829,8 +915,14 @@ def main():
 
             if st.session_state.indexed_files:
                 for file_name in st.session_state.indexed_files:
-                    st.markdown(f'<div class="file-item">📄 {file_name}</div>', unsafe_allow_html=True)
-                st.markdown(f'<div class="file-count">Total files: {len(st.session_state.indexed_files)}</div>', unsafe_allow_html=True)
+                    st.markdown(
+                        f'<div class="file-item">📄 {file_name}</div>',
+                        unsafe_allow_html=True,
+                    )
+                st.markdown(
+                    f'<div class="file-count">Total files: {len(st.session_state.indexed_files)}</div>',
+                    unsafe_allow_html=True,
+                )
             else:
                 st.markdown("*No files indexed yet*")
 
@@ -844,16 +936,22 @@ def main():
             if st.session_state.chat_sessions:
                 for session in st.session_state.chat_sessions:
                     # ... your button logic for switching/deleting sessions
-                    is_active = session["session_id"] == st.session_state.active_session_id
+                    is_active = (
+                        session["session_id"] == st.session_state.active_session_id
+                    )
                     button_style = "primary" if is_active else "secondary"
-                    if st.button(f"{session.get('title', 'Chat')[:25]}...", key=f"session_{session['session_id']}", type=button_style, use_container_width=True):
+                    if st.button(
+                        f"{session.get('title', 'Chat')[:25]}...",
+                        key=f"session_{session['session_id']}",
+                        type=button_style,
+                        use_container_width=True,
+                    ):
                         if not is_active:
                             st.session_state.active_session_id = session["session_id"]
                             st.session_state.load_history_flag = True
                             st.rerun()
             else:
                 st.info("No chat history yet.")
-
 
     # --- 4. MAIN CHAT INTERFACE ---
     display_header()
@@ -870,9 +968,13 @@ def main():
             response = asyncio.run(process_query(query))
             st.session_state.messages.append({"role": "assistant", "content": response})
             # Save history
-            asyncio.run(save_chat_history(st.session_state.active_session_id, st.session_state.messages))
+            asyncio.run(
+                save_chat_history(
+                    st.session_state.active_session_id, st.session_state.messages
+                )
+            )
             st.session_state.processing = False
-            st.rerun() # Rerun once to display the new message
+            st.rerun()  # Rerun once to display the new message
 
     # User input form
     if prompt := st.chat_input("Ask anything about your documents..."):
@@ -881,12 +983,14 @@ def main():
         st.session_state.processing = True
         st.rerun()
 
+
 # Helper function for fetching files (to avoid code duplication)
 async def fetch_files():
     async with httpx.AsyncClient(timeout=10.0) as client:
         response = await client.get(f"{API_URL}/files/{st.session_state.index_name}")
         response.raise_for_status()
         return response.json()
+
 
 if __name__ == "__main__":
     main()

@@ -8,18 +8,21 @@ from pathlib import Path
 
 try:
     from PIL import Image
+
     PIL_INSTALLED = True
 except ImportError:
     PIL_INSTALLED = False
 
 try:
     import filetype
+
     FILETYPE_INSTALLED = True
 except ImportError:
     FILETYPE_INSTALLED = False
 
 try:
     import pillow_heif
+
     HEIF_INSTALLED = True
     if PIL_INSTALLED:
         pillow_heif.register_heif_opener()
@@ -27,6 +30,7 @@ except ImportError:
     HEIF_INSTALLED = False
 
 from src.core.base.parsers.base_parser import AsyncParser
+
 
 class ImageParser(AsyncParser):
     """A parser for extracting content and descriptions from image files using vision models."""
@@ -44,7 +48,12 @@ class ImageParser(AsyncParser):
         "webp": "image/webp",
     }
 
-    def __init__(self, aclient_openai: Optional[Any] = None, server_type: str = None, processor_ref: Optional[Any] = None):
+    def __init__(
+        self,
+        aclient_openai: Optional[Any] = None,
+        server_type: str = None,
+        processor_ref: Optional[Any] = None,
+    ):
         self.aclient_openai = aclient_openai
         self.server_type = server_type or os.getenv("SERVER_TYPE")
         self.processor_ref = processor_ref
@@ -54,15 +63,21 @@ class ImageParser(AsyncParser):
         """Load the vision prompt template from YAML file."""
         try:
             prompt_file_path = Path("./prompts") / "vision_img.yaml"
-            with open(prompt_file_path, 'r') as f:
+            with open(prompt_file_path, "r") as f:
                 prompt_data = yaml.safe_load(f)
-            
-            if prompt_data and "vision_img" in prompt_data and "template" in prompt_data["vision_img"]:
+
+            if (
+                prompt_data
+                and "vision_img" in prompt_data
+                and "template" in prompt_data["vision_img"]
+            ):
                 template_content = prompt_data["vision_img"]["template"]
                 print("Successfully loaded vision prompt template.")
                 return template_content
             else:
-                print(f"Vision prompt template not found or invalid in {prompt_file_path}.")
+                print(
+                    f"Vision prompt template not found or invalid in {prompt_file_path}."
+                )
                 return "Describe the image in detail, including all visible elements, text, and context."
         except Exception as e:
             print(f"Error loading vision prompt: {e}")
@@ -72,7 +87,7 @@ class ImageParser(AsyncParser):
         """Detect HEIC format using magic numbers and patterns."""
         if not data or len(data) < 12:
             return False
-            
+
         heic_patterns = [
             b"ftyp",
             b"heic",
@@ -101,8 +116,9 @@ class ImageParser(AsyncParser):
 
     def _is_tiff(self, data: bytes) -> bool:
         """Detect TIFF format using magic numbers."""
-        return (data.startswith(b"II*\x00") or  # Little-endian
-                data.startswith(b"MM\x00*"))    # Big-endian
+        return data.startswith(b"II*\x00") or data.startswith(  # Little-endian
+            b"MM\x00*"
+        )  # Big-endian
 
     def _get_image_media_type(self, data: bytes, filename: Optional[str] = None) -> str:
         """Determine the correct media type based on image data and/or filename."""
@@ -142,7 +158,7 @@ class ImageParser(AsyncParser):
         if not PIL_INSTALLED or not HEIF_INSTALLED:
             print("PIL or pillow_heif not installed. Cannot convert HEIC to JPEG.")
             return data
-            
+
         try:
             # Create BytesIO object for input
             input_buffer = BytesIO(data)
@@ -174,7 +190,7 @@ class ImageParser(AsyncParser):
         if not PIL_INSTALLED:
             print("PIL not installed. Cannot convert TIFF to JPEG.")
             return data
-            
+
         try:
             # Open TIFF image
             with BytesIO(data) as input_buffer:
@@ -192,10 +208,12 @@ class ImageParser(AsyncParser):
             print(f"Error converting TIFF to JPEG: {str(e)}")
             return data  # Return original data on error
 
-    async def _get_image_description(self, image_bytes: bytes, filename: Optional[str] = None) -> str:
+    async def _get_image_description(
+        self, image_bytes: bytes, filename: Optional[str] = None
+    ) -> str:
         """Get description of image using vision model."""
         media_type = self._get_image_media_type(image_bytes, filename)
-        
+
         # Check if conversion is needed
         if media_type == "image/heic":
             image_bytes = await self._convert_heic_to_jpeg(image_bytes)
@@ -203,27 +221,33 @@ class ImageParser(AsyncParser):
         elif media_type == "image/tiff":
             image_bytes = await self._convert_tiff_to_jpeg(image_bytes)
             media_type = "image/jpeg"
-        
+
         # Encode image as base64
         image_data = base64.b64encode(image_bytes).decode("utf-8")
-        
+
         if self.server_type == "ARMY":
             if not self.processor_ref:
-                print("Processor reference not available for NVIDIA VLM call. Skipping image description.")
+                print(
+                    "Processor reference not available for NVIDIA VLM call. Skipping image description."
+                )
                 return ""
-            
+
             print("Using NVIDIA VLM for image description.")
             # Prepare the payload for the NVIDIA API caller
             messages = [
-                {"role": "user", "content": self.vision_prompt_text, "image": image_data}
+                {
+                    "role": "user",
+                    "content": self.vision_prompt_text,
+                    "image": image_data,
+                }
             ]
-            
+
             try:
                 description = await self.processor_ref._call_nvidia_api(
-                    payload_messages=messages, 
+                    payload_messages=messages,
                     is_vision_call=True,
                     max_tokens=1024,
-                    temperature=1.0
+                    temperature=1.0,
                 )
                 return description.strip() if description else ""
             except Exception as e:
@@ -232,11 +256,13 @@ class ImageParser(AsyncParser):
 
         elif self.aclient_openai:
             print("Using OpenAI VLM for image description.")
-            
+
             if not self.processor_ref:
-                print("Processor reference not available for OpenAI API call. Skipping image description.")
+                print(
+                    "Processor reference not available for OpenAI API call. Skipping image description."
+                )
                 return ""
-                
+
             messages = [
                 {
                     "role": "user",
@@ -244,12 +270,14 @@ class ImageParser(AsyncParser):
                         {"type": "text", "text": self.vision_prompt_text},
                         {
                             "type": "image_url",
-                            "image_url": {"url": f"data:{media_type};base64,{image_data}"},
+                            "image_url": {
+                                "url": f"data:{media_type};base64,{image_data}"
+                            },
                         },
                     ],
                 }
             ]
-            
+
             try:
                 # Use the OpenAI API caller from the processor reference
                 description = await self.processor_ref._call_openai_api(
@@ -263,7 +291,7 @@ class ImageParser(AsyncParser):
             except Exception as e:
                 print(f"Error calling OpenAI API for image description: {e}")
                 return ""
-        
+
         else:
             print("No vision model available. Skipping image description.")
             return ""
@@ -271,28 +299,28 @@ class ImageParser(AsyncParser):
     async def ingest(self, data: bytes, **kwargs) -> AsyncGenerator[str, None]:
         """
         Process an image and yield its description.
-        
+
         Args:
             data: The binary image data
             **kwargs: Additional arguments including filename
-            
+
         Yields:
             String description of the image content
         """
         if not isinstance(data, bytes):
             raise TypeError("Image data must be in bytes format.")
-        
-        filename = kwargs.get('filename', None)
-        
+
+        filename = kwargs.get("filename", None)
+
         try:
             # Get description from vision model
             description = await self._get_image_description(data, filename)
-            
+
             if description:
                 yield description
             else:
                 yield "Could not generate description for this image."
-                
+
         except Exception as e:
             print(f"Failed to process image: {e}")
             yield f"Error processing image: {str(e)}"

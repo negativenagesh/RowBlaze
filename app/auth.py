@@ -2,6 +2,7 @@ import os
 import bcrypt
 import streamlit as st
 
+
 def load_credentials():
     """
     Reads ROWBLAZE_CREDENTIALS env var:
@@ -17,6 +18,7 @@ def load_credentials():
         creds[user.strip()] = hashed.strip()
     return creds
 
+
 def verify_user(username: str, password: str) -> bool:
     creds = load_credentials()
     if username not in creds:
@@ -25,6 +27,7 @@ def verify_user(username: str, password: str) -> bool:
         return bcrypt.checkpw(password.encode(), creds[username].encode())
     except Exception:
         return False
+
 
 def require_auth():
     if not st.session_state.get("authenticated", False):

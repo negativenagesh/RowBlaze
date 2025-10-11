@@ -4,6 +4,7 @@ import os
 import base64
 from pathlib import Path
 
+
 def render_navbar():
     # --- Use Pathlib for robust path handling ---
     css_path = Path(__file__).parent.parent / "styles" / "styles.css"
@@ -15,7 +16,7 @@ def render_navbar():
 
     # Path to the logo file relative to this script
     logo_path = Path(__file__).parent.parent.parent / "assets" / "cover.png"
-    
+
     # Navbar HTML with updated links for RowBlaze
     navbar_html = f"""
     <style>
@@ -44,10 +45,11 @@ def render_navbar():
     """
     st.markdown(navbar_html, unsafe_allow_html=True)
 
+
 def get_image_as_base64(path: Path) -> str:
     """Convert an image file to a base64 string"""
     if not path.exists():
         print(f"Warning: Image not found at {path}")
         return ""
     with open(path, "rb") as img_file:
-        return base64.b64encode(img_file.read()).decode('utf-8')
+        return base64.b64encode(img_file.read()).decode("utf-8")

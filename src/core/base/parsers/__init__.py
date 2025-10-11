@@ -10,10 +10,10 @@ __all__ = [
     "AsyncParser",
     "BaseParser",
     "CSVParser",
-    "DOCParser", 
+    "DOCParser",
     "DOCXParser",
     "ODTParser",
     "TextParser",
     "XLSXParser",
-    "XLSXParserAdvanced"
+    "XLSXParserAdvanced",
 ]

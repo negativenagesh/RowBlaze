@@ -2,12 +2,14 @@ import logging
 import json
 from typing import Any, Dict, Optional
 
+
 # --- Base Tool Definition ---
 # In a larger system, this Tool base class would ideally live in a shared abstractions module.
 class Tool:
     """
     Base class for tools that can be used by an agent.
     """
+
     def __init__(self, name: str, description: str, parameters: Dict[str, Any]):
         self.name = name
         self.description = description
@@ -16,12 +18,15 @@ class Tool:
 
     def set_context(self, context: Any):
         self.context = context
-        logger.debug(f"Context set for tool '{self.name}': {type(context).__name__ if context else 'None'}")
+        logger.debug(
+            f"Context set for tool '{self.name}': {type(context).__name__ if context else 'None'}"
+        )
 
     async def execute(self, *args: Any, **kwargs: Any) -> Any:
         raise NotImplementedError(
             f"The 'execute' method must be implemented by subclasses of Tool (e.g., {self.__class__.__name__})."
         )
+
 
 # --- End Base Tool Definition ---
 
@@ -87,59 +92,57 @@ class SearchFileDescriptionsTool(Tool):
         query_body = {
             "query": {
                 "match": {
-                    "metadata.document_summary": {
-                        "query": query,
-                        "operator": "and"
-                    }
+                    "metadata.document_summary": {"query": query, "operator": "and"}
                 }
             },
             "aggs": {
                 "relevant_documents": {
                     "terms": {
                         "field": "metadata.doc_id.keyword",
-                        "size": 10 # Return top 10 relevant documents
+                        "size": 10,  # Return top 10 relevant documents
                     },
                     "aggs": {
                         "top_hit": {
-                            "top_hits": {
-                                "size": 1,
-                                "_source": ["metadata.file_name"]
-                            }
+                            "top_hits": {"size": 1, "_source": ["metadata.file_name"]}
                         },
-                        "max_score": {
-                            "max": {
-                                "script": {
-                                    "source": "_score"
-                                }
-                            }
-                        }
-                    }
+                        "max_score": {"max": {"script": {"source": "_score"}}},
+                    },
                 }
             },
-            "size": 0
+            "size": 0,
         }
 
-        logger.debug(f"Executing file description search with query: {json.dumps(query_body, indent=2)}")
+        logger.debug(
+            f"Executing file description search with query: {json.dumps(query_body, indent=2)}"
+        )
 
         try:
             response = await es_client.search(index=index_name, body=query_body)
-            
-            buckets = response.get("aggregations", {}).get("relevant_documents", {}).get("buckets", [])
+
+            buckets = (
+                response.get("aggregations", {})
+                .get("relevant_documents", {})
+                .get("buckets", [])
+            )
 
             if not buckets:
-                return f"No documents found with summaries matching the query: '{query}'"
+                return (
+                    f"No documents found with summaries matching the query: '{query}'"
+                )
 
             results = []
             for bucket in buckets:
                 doc_id = bucket.get("key")
                 score = bucket.get("max_score", {}).get("value", 0.0)
                 top_hit = bucket.get("top_hit", {}).get("hits", {}).get("hits", [{}])[0]
-                file_name = top_hit.get("_source", {}).get("metadata", {}).get("file_name", "Unknown")
-                results.append({
-                    "doc_id": doc_id,
-                    "file_name": file_name,
-                    "relevance_score": score
-                })
+                file_name = (
+                    top_hit.get("_source", {})
+                    .get("metadata", {})
+                    .get("file_name", "Unknown")
+                )
+                results.append(
+                    {"doc_id": doc_id, "file_name": file_name, "relevance_score": score}
+                )
 
             # Sort by relevance score descending
             results.sort(key=lambda x: x["relevance_score"], reverse=True)
@@ -150,14 +153,16 @@ class SearchFileDescriptionsTool(Tool):
                 formatted_lines.append(
                     f"- Document ID: {res['doc_id']}, File Name: {res['file_name']} (Score: {res['relevance_score']:.2f})"
                 )
-            
+
             final_output = "\n".join(formatted_lines)
-            logger.info(f"{self.name} executed successfully. Found {len(results)} relevant documents.")
+            logger.info(
+                f"{self.name} executed successfully. Found {len(results)} relevant documents."
+            )
             return final_output
 
         except Exception as e:
             logger.error(
                 f"Error during {self.name} execution for query '{query}': {e}",
-                exc_info=True
+                exc_info=True,
             )
             return f"Error: Failed to execute file description search: {str(e)}"

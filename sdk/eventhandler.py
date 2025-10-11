@@ -2,14 +2,14 @@ from openai import AssistantEventHandler
 from typing_extensions import override
 
 
-class EventHandler(AssistantEventHandler):    
+class EventHandler(AssistantEventHandler):
     def __init__(self):
         super().__init__()
         self.response_data = {
             "text_created": "",
             "text_delta": "",
             "tool_call_type": "",
-            "code_interpreter_logs": []
+            "code_interpreter_logs": [],
         }
 
     @override
@@ -27,7 +27,7 @@ class EventHandler(AssistantEventHandler):
         yield self.response_data  # Yield updated data after tool call is created
 
     def on_tool_call_delta(self, delta, snapshot):
-        if delta.type == 'code_interpreter':
+        if delta.type == "code_interpreter":
             if delta.code_interpreter.input:
                 self.response_data["text_delta"] += delta.code_interpreter.input
             if delta.code_interpreter.outputs:
@@ -35,4 +35,3 @@ class EventHandler(AssistantEventHandler):
                     if output.type == "logs":
                         self.response_data["code_interpreter_logs"].append(output.logs)
             yield self.response_data  # Yield updated data after tool call delta
-

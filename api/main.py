@@ -39,6 +39,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+
 # Health endpoint
 @app.get("/api/health", tags=["Health"])
 async def health_check():
@@ -46,24 +47,29 @@ async def health_check():
     return {
         "status": "healthy",
         "timestamp": datetime.now().isoformat(),
-        "version": API_VERSION
+        "version": API_VERSION,
     }
+
 
 # Include routers
 app.include_router(ingestion.router, prefix="/api", tags=["ingestion"])
 app.include_router(retrieval.router, prefix="/api", tags=["retrieval"])
 app.include_router(chat.router, prefix="/api", tags=["chat"])
 
+
 @app.on_event("startup")
 async def startup_event():
     logger.info("Starting RowBlaze API server...")
     # Any initialization code can go here
+
 
 @app.on_event("shutdown")
 async def shutdown_event():
     logger.info("Shutting down RowBlaze API server...")
     # Cleanup code can go here
 
+
 if __name__ == "__main__":
     import uvicorn
+
     uvicorn.run("api.main:app", host="0.0.0.0", port=8000, reload=True)

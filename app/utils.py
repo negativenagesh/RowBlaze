@@ -4,6 +4,7 @@ import os
 import asyncio
 from typing import List, Dict, Any, Callable
 
+
 def stream_response(response_text):
     """
     Function to stream text responses character by character
@@ -11,32 +12,37 @@ def stream_response(response_text):
     """
     message_placeholder = st.empty()
     full_response = ""
-    
+
     # Simulate streaming
     for chunk in response_text.split():
         full_response += chunk + " "
         time.sleep(0.05)
         # Add a blinking cursor to simulate typing
         message_placeholder.markdown(full_response + "▌")
-    
+
     # Replace with the final response
     message_placeholder.markdown(full_response)
-    
+
     return full_response
+
 
 def display_file_info(file_info: Dict[str, Any]) -> None:
     """
     Display information about an uploaded file
     """
     st.markdown(f"**{file_info['name']}**")
-    
-    if file_info.get('description'):
+
+    if file_info.get("description"):
         st.markdown(f"*{file_info['description']}*")
-        
-    if file_info.get('timestamp'):
+
+    if file_info.get("timestamp"):
         from datetime import datetime
-        timestamp = datetime.fromtimestamp(file_info['timestamp']).strftime('%Y-%m-%d %H:%M:%S')
+
+        timestamp = datetime.fromtimestamp(file_info["timestamp"]).strftime(
+            "%Y-%m-%d %H:%M:%S"
+        )
         st.caption(f"Uploaded on {timestamp}")
+
 
 def create_temp_directory():
     """
@@ -46,6 +52,7 @@ def create_temp_directory():
         os.makedirs("/tmp")
     return "/tmp"
 
+
 def display_json(json_data):
     """
     Format and display JSON data
@@ -53,11 +60,13 @@ def display_json(json_data):
     try:
         if isinstance(json_data, str):
             import json
+
             data = json.loads(json_data)
         else:
             data = json_data
-        
+
         import pandas as pd
+
         if isinstance(data, list):
             # Convert list to dataframe for display
             df = pd.DataFrame(data)
