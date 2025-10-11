@@ -1,0 +1,84 @@
+version: '3.8'
+
+services:
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile.api
+    image: rowblaze-api:latest
+    container_name: rowblaze-api
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    environment:
+      - OPEN_AI_KEY=${OPEN_AI_KEY}
+      - OPENAI_MODEL=${OPENAI_MODEL}
+      - OPENAI_SUMMARY_MODEL=${OPENAI_SUMMARY_MODEL}
+      - OPENAI_EMBEDDING_MODEL=${OPENAI_EMBEDDING_MODEL}
+      - OPENAI_EMBEDDING_DIMENSIONS=${OPENAI_EMBEDDING_DIMENSIONS}
+      - OPENAI_BASE_DIMENSION=${OPENAI_BASE_DIMENSION}
+      - RAG_UPLOAD_ELASTIC_URL=${RAG_UPLOAD_ELASTIC_URL}
+      - ELASTICSEARCH_API_KEY=${ELASTICSEARCH_API_KEY}
+      - MISTRAL_API_KEY=${MISTRAL_API_KEY}
+      - CHUNK_SIZE_TOKENS=${CHUNK_SIZE_TOKENS}
+      - CHUNK_OVERLAP_TOKENS=${CHUNK_OVERLAP_TOKENS}
+      - FORWARD_CHUNKS=${FORWARD_CHUNKS}
+      - BACKWARD_CHUNKS=${BACKWARD_CHUNKS}
+      - CHARS_PER_TOKEN_ESTIMATE=${CHARS_PER_TOKEN_ESTIMATE}
+      - SUMMARY_MAX_TOKENS=${SUMMARY_MAX_TOKENS}
+      - SEMANTIC_NEIGHBORS=${SEMANTIC_NEIGHBORS}
+      - SEMANTIC_SIMILARITY_THRESHOLD=${SEMANTIC_SIMILARITY_THRESHOLD}
+    volumes:
+      - api_data:/app/data
+      - ./uploads:/app/uploads
+    networks:
+      - rowblaze-network
+    healthcheck:
+      test: ["CMD", "python", "/app/docker/scripts/healthcheck.py", "http://localhost:8000/api/health"]
+      interval: 30s
+      timeout: 30s
+      retries: 3
+      start_period: 10s
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile.app
+    image: rowblaze-app:latest
+    container_name: rowblaze-app
+    restart: unless-stopped
+    ports:
+      - "8501:8501"
+    environment:
+      - ROWBLAZE_API_URL=http://api:8000/api
+    depends_on:
+      - api
+    volumes:
+      - app_data:/app/data
+      - ./uploads:/app/uploads
+    networks:
+      - rowblaze-network
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "http://localhost:8501/_stcore/health"]
+      interval: 30s
+      timeout: 30s
+      retries: 3
+      start_period: 10s
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+networks:
+  rowblaze-network:
+    driver: bridge
+
+volumes:
+  api_data:
+  app_data:
