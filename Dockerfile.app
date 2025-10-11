@@ -1,24 +1,33 @@
-FROM python:3.11-slim
+# ---- Builder Stage ----
+FROM python:3.11-slim as builder
 
-# Set working directory
+WORKDIR /app
+
+# Create a virtual environment
+ENV VIRTUAL_ENV=/app/venv
+RUN python3 -m venv $VIRTUAL_ENV
+ENV PATH="$VIRTUAL_ENV/bin:$PATH"
+
+# Copy and install dependencies into the virtual environment
+COPY requirements-app.txt .
+RUN pip install --no-cache-dir -r requirements-app.txt
+
+
+# ---- Final Stage ----
+FROM python:3.11-slim as final
+
 WORKDIR /app
 
 # Set environment variables
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
-    PYTHONPATH=/app
+    PATH="/app/venv/bin:$PATH"
 
-# Install system dependencies
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    build-essential \
-    libffi-dev \
-    curl \
-    && apt-get clean \
-    && rm -rf /var/lib/apt/lists/*
+# Install curl for healthcheck
+RUN apt-get update && apt-get install -y --no-install-recommends curl && rm -rf /var/lib/apt/lists/*
 
-# Install Python dependencies
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+# Copy the virtual environment from the builder stage
+COPY --from=builder /app/venv /app/venv
 
 # Copy project files
 COPY app/ /app/app/
