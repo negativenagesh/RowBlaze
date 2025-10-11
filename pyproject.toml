@@ -1,10 +1,44 @@
 [project]
 name = "rowblaze"
 version = "0.1.0"
-description = "Add your description here"
+description = "RAG for Structured and Unstructured data"
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
+    "langchain",
+    "openai",
+    "elasticsearch",
+    "pydantic",
+    "python-dotenv",
+    "numpy",
+    "pandas",
+    "fastapi",
+    "uvicorn",
+    "python-multipart",
+    "pdfplumber",
+    "pypdf",
+    "tiktoken",
+    "aiohttp",
+    "PyYAML",
+    "pytesseract",
+    "pdf2image",
+    "pypandoc",
+    "pybase64",
+    "python-csv",
+    "psycopg2-binary",
+    "PyMuPDF",
+    "pymongo",
+    "networkx",
+    "openpyxl",
+    "odfpy",
+    "olefile",
+    "python-docx",
+    "httpx",
+    "sentence-transformers",
+    "nltk",
+    "torch",
+    "streamlit",
+    "extra-streamlit-components",
     "bcrypt>=4.3.0",
     "bson>=0.5.10",
     "dotenv>=0.9.9",
@@ -30,4 +64,126 @@ dependencies = [
     "streamlit>=1.48.0",
     "tiktoken>=0.11.0",
     "watchdog>=6.0.0",
+    "pytest",
+    "pytest-cov",
+    "pytest-asyncio",
+    "black",
+    "flake8",
+    "mypy",
+    "isort",
+    "neo4j>=6.0.2",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0.0",
+    "pytest-cov>=4.0.0",
+    "pytest-asyncio>=0.21.0",
+    "black>=23.0.0",
+    "flake8>=6.0.0",
+    "mypy>=1.0.0",
+    "isort>=5.12.0",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["api", "src", "sdk", "app"]
+
+[tool.black]
+line-length = 88
+target-version = ['py311']
+include = '\.pyi?$'
+extend-exclude = '''
+/(
+  # directories
+  \.eggs
+  | \.git
+  | \.hg
+  | \.mypy_cache
+  | \.tox
+  | \.venv
+  | build
+  | dist
+)/
+'''
+
+[tool.isort]
+profile = "black"
+multi_line_output = 3
+line_length = 88
+
+[tool.mypy]
+python_version = "3.11"
+warn_return_any = true
+warn_unused_configs = true
+disallow_untyped_defs = false  # Set to false for now due to existing code
+disallow_incomplete_defs = false
+check_untyped_defs = true
+disallow_untyped_decorators = false
+no_implicit_optional = true
+warn_redundant_casts = true
+warn_unused_ignores = true
+warn_no_return = true
+warn_unreachable = true
+strict_equality = true
+
+[[tool.mypy.overrides]]
+module = "tests.*"
+disallow_untyped_defs = false
+
+[tool.coverage.run]
+source = ["api", "src"]
+omit = [
+    "*/tests/*",
+    "*/__pycache__/*",
+    "*/venv/*",
+    "*/.venv/*",
+]
+
+[tool.coverage.report]
+exclude_lines = [
+    "pragma: no cover",
+    "def __repr__",
+    "raise AssertionError",
+    "raise NotImplementedError",
+    "if __name__ == .__main__.:",
+    "if TYPE_CHECKING:",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+addopts = [
+    "-v",
+    "--tb=short",
+    "--strict-markers",
+    "--strict-config",
+    "--cov-report=term-missing",
+    "--cov-branch"
+]
+markers = [
+    "unit: Unit tests",
+    "integration: Integration tests", 
+    "e2e: End-to-end tests",
+    "slow: Slow running tests"
+]
+filterwarnings = [
+    "ignore::DeprecationWarning",
+    "ignore::PendingDeprecationWarning"
+]
+
+[dependency-groups]
+dev = [
+    "black>=25.9.0",
+    "flake8>=7.3.0",
+    "isort>=6.1.0",
+    "mypy>=1.18.2",
+    "pytest>=8.4.2",
+    "pytest-asyncio>=1.2.0",
+    "pytest-cov>=7.0.0",
 ]
