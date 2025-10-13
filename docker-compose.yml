@@ -7,8 +7,8 @@ services:
       dockerfile: nginx/Dockerfile
     container_name: rowblaze-nginx
     ports:
-      - "80:80"      
-      - "443:443"    
+      - "80:80"
+      - "443:443"
     depends_on:
       - api
       - app
@@ -40,6 +40,8 @@ services:
       - SUMMARY_MAX_TOKENS=${SUMMARY_MAX_TOKENS}
       - SEMANTIC_NEIGHBORS=${SEMANTIC_NEIGHBORS}
       - SEMANTIC_SIMILARITY_THRESHOLD=${SEMANTIC_SIMILARITY_THRESHOLD}
+      - JWT_SECRET_KEY=${JWT_SECRET_KEY}
+      - ENVIRONMENT=${ENVIRONMENT:-production}
     volumes:
       - api_data:/app/data
       - ./uploads:/app/uploads
@@ -66,6 +68,11 @@ services:
     restart: unless-stopped
     environment:
       - ROWBLAZE_API_URL=http://api:8000/api
+      - JWT_SECRET_KEY=${JWT_SECRET_KEY}
+      - GITHUB_CLIENT_ID=${GITHUB_CLIENT_ID}
+      - GITHUB_CLIENT_SECRET=${GITHUB_CLIENT_SECRET}
+      - GITHUB_REDIRECT_URI=${GITHUB_REDIRECT_URI}
+      - ENVIRONMENT=${ENVIRONMENT:-production}
     depends_on:
       - api
     volumes:
