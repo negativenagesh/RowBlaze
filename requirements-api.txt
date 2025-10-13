@@ -30,7 +30,6 @@ httpx
 sentence-transformers
 nltk
 torch
-bcrypt
 bson
 filetype
 markdown
@@ -38,3 +37,4 @@ mistralai
 neo4j
 pillow-heif
 watchdog
+PyJWT
