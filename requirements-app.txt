@@ -2,3 +2,4 @@ streamlit
 extra-streamlit-components
 httpx
 pandas
+PyJWT
