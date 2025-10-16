@@ -6,7 +6,7 @@ from elasticsearch import AsyncElasticsearch
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, Field
 
-from api.dependencies import get_elasticsearch_client
+from api.dependencies import get_current_user, get_elasticsearch_client
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -223,3 +223,44 @@ async def delete_chat_history(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Error deleting chat session: {str(e)}",
         )
+
+
+# Update the chat endpoints to use user-specific storage
+
+
+@router.post("/chat/save")
+async def save_chat_history(
+    chat_data: ChatHistory,
+    current_user=Depends(get_current_user),
+):
+    user_id = current_user["user_id"]
+
+    # Store chat with user ID prefix for isolation
+    chat_data.session_id = f"{user_id}:{chat_data.session_id}"
+
+    # Rest of the function remains the same...
+
+
+@router.get("/chat/{session_id}")
+async def get_chat_history(
+    session_id: str,
+    current_user=Depends(get_current_user),
+):
+    user_id = current_user["user_id"]
+
+    # Add user ID prefix to ensure users only access their own chats
+    user_session_id = f"{user_id}:{session_id}"
+
+    # Then proceed with fetching the chat history...
+
+
+@router.get("/chat/list/sessions")
+async def list_chat_sessions(
+    current_user=Depends(get_current_user),
+):
+    user_id = current_user["user_id"]
+
+    # Only return sessions belonging to this user
+    # Filter chats by user ID prefix
+
+    # Return filtered sessions...

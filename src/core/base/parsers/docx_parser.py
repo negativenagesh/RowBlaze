@@ -51,7 +51,9 @@ class DOCXParser(AsyncParser[bytes]):
     def _load_vision_prompt(self) -> str:
         """Loads the vision prompt from the specified YAML file."""
         try:
-            prompt_file_path = Path("./prompts") / "vision_img.yaml"
+            prompt_file_path = (
+                Path(__file__).parent.parent.parent / "prompts" / "vision_img.yaml"
+            )
             with open(prompt_file_path, "r") as f:
                 prompt_data = yaml.safe_load(f)
 

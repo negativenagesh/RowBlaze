@@ -38,3 +38,5 @@ neo4j
 pillow-heif
 watchdog
 PyJWT
+bcrypt
+email-validator

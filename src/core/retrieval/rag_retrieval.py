@@ -57,10 +57,15 @@ ES_USER = os.getenv("ELASTIC_USER")
 ES_PASS = os.getenv("ELASTIC_PASSWORD")
 
 MODEL_TOKEN_LIMITS = {
+    "gpt-4o-mini": 16384,
     "gpt-4o-mini-2024-07-18": 16384,
-    "gpt-4.1-nano-2025-04-14": 32768,
-    "gpt-5-nano-2025-08-07": 128000,
+    "gpt-4o": 128000,
+    "gpt-4": 8192,
+    "gpt-5-mini-2025-08-07": 128000,
     "gpt-oss-120b": 131072,
+    "gpt-5-nano-2025-08-07": 128000,
+    "gpt-4.1-mini-2025-04-14": 32768,
+    "gpt-4.1-nano-2025-04-14": 32768,
 }
 
 # PROVENCE_MODEL_ID = "naver/provence-reranker-debertav3-v1"
@@ -185,6 +190,9 @@ class RAGFusionRetriever:
         self.Server_type = os.getenv("SERVER_TYPE")
         self.embedding_model = None
         self.embedding_dims = OPENAI_EMBEDDING_DIMENSIONS
+
+        # Store the model from params for consistent usage
+        self.model = self.params.get("model", OPENAI_CHAT_MODEL)
 
         # Rate limiting and error tracking
         self.api_call_count = 0
@@ -376,7 +384,7 @@ class RAGFusionRetriever:
             print("❌ OpenAI client not configured. Cannot make API call.")
             return ""
 
-        model_to_use = self.params.get("model", model_name)
+        model_to_use = self.model or model_name or "gpt-4o-mini"
 
         # Use the provided max_tokens or get from params or use model-specific default
         max_tokens_to_use = max_tokens
@@ -489,28 +497,40 @@ class RAGFusionRetriever:
 
         query_type = ""
         if self.Server_type == "ARMY":
-            print(f"ARMY mode: Classifying query via NVIDIA API: '{query}'")
-            messages = [{"role": "user", "content": classification_prompt}]
-            query_type = await self._call_nvidia_api(
-                payload_messages=messages, max_tokens=20, temperature=0.0
-            )
-        else:  # Default to OpenAI
-            print(f"Classifying query via OpenAI: '{query}'")
-            messages = [{"role": "user", "content": classification_prompt}]
-            query_type = await self._call_openai_api(
-                model_name=OPENAI_CHAT_MODEL,
-                payload_messages=messages,
-                max_tokens=20,
-                temperature=0.0,
-            )
+            pass
+        else:
+            try:
+                messages = [
+                    {
+                        "role": "system",
+                        "content": "You are a query classifier that responds with ONLY the category name.",
+                    },
+                    {"role": "user", "content": classification_prompt},
+                ]
+
+                # Use the stored model parameter
+                model_to_use = self.model or "gpt-4o-mini"  # Fallback model
+
+                llm_response = await self.aclient_openai.chat.completions.create(
+                    model=model_to_use,  # Explicitly specify model
+                    messages=messages,
+                    temperature=0.1,
+                    max_tokens=20,
+                )
+                query_type = llm_response.choices[0].message.content.strip().lower()
+            except Exception as e:
+                print(
+                    f"⚠️ Error classifying query: {e}. Defaulting to 'complex_analysis'."
+                )
+                query_type = "complex_analysis"
 
         cleaned_query_type = query_type.strip().lower()
         if cleaned_query_type in valid_types:
-            print(f"✅ Query classified as: '{cleaned_query_type}'")
+            print(f"Query classified as: {cleaned_query_type}")
             return cleaned_query_type
         else:
             print(
-                f"⚠️ Warning: LLM returned invalid query type '{cleaned_query_type}'. Defaulting to 'complex_analysis'."
+                f"Invalid classification: '{cleaned_query_type}'. Defaulting to 'complex_analysis'."
             )
             return "complex_analysis"
 
@@ -1518,7 +1538,7 @@ Output:
             {"role": "system", "content": SYSTEM_PROMPT_TEMPLATE},
             {"role": "user", "content": user_prompt},
         ]
-        model_to_use = model or self.params.get("model", OPENAI_CHAT_MODEL)
+        model_to_use = model or self.model or OPENAI_CHAT_MODEL or "gpt-4o-mini"
         max_tokens = self.params.get(
             "max_tokens", MODEL_TOKEN_LIMITS.get(model_to_use, 4096)
         )
@@ -1819,8 +1839,13 @@ async def handle_request(data: Message) -> FunctionResponse:
         if es_client and hasattr(es_client, "close"):
             await es_client.close()
             print("Elasticsearch client closed.")
-        if aclient_openai and hasattr(aclient_openai, "aclose"):
-            print("open ai client close")
+        if aclient_openai and hasattr(aclient_openai, "close"):
+            try:
+                await aclient_openai.close()
+                print("OpenAI client closed.")
+            except Exception as e:
+                print(f"Error closing OpenAI client: {e}")
+        elif aclient_openai and hasattr(aclient_openai, "aclose"):
             try:
                 await aclient_openai.aclose()
                 print("OpenAI client closed.")

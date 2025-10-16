@@ -6,7 +6,7 @@ from dotenv import load_dotenv
 from fastapi import APIRouter, Depends, FastAPI, HTTPException, status
 from fastapi.middleware.cors import CORSMiddleware
 
-from api.routes import chat, ingestion, retrieval
+from api.routes import auth, chat, ingestion, retrieval
 
 # Load environment variables
 load_dotenv()
@@ -56,6 +56,7 @@ async def health_check():
 app.include_router(ingestion.router, prefix="/api", tags=["ingestion"])
 app.include_router(retrieval.router, prefix="/api", tags=["retrieval"])
 app.include_router(chat.router, prefix="/api", tags=["chat"])
+app.include_router(auth.router, prefix="/api/auth", tags=["auth"])
 
 
 @app.on_event("startup")

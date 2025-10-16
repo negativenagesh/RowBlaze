@@ -22,6 +22,8 @@ services:
     image: rowblaze-api:latest
     container_name: rowblaze-api
     restart: unless-stopped
+    ports:
+      - "8000:8000"  # Expose API port for local development
     environment:
       - OPEN_AI_KEY=${OPEN_AI_KEY}
       - OPENAI_MODEL=${OPENAI_MODEL}

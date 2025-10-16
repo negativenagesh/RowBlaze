@@ -24,6 +24,8 @@ from api.models import IngestionRequest, IngestionResponse
 from sdk.message import Message
 from src.core.ingestion.rag_ingestion import example_run_file_processing
 
+from ..middleware.auth_middleware import get_current_user
+
 logger = logging.getLogger(__name__)
 router = APIRouter()
 
@@ -78,6 +80,8 @@ async def ingest_document(
 
         if model:
             params["model"] = model
+        else:
+            params["model"] = "gpt-4o-mini"  # Default model
         if max_tokens:
             params["max_tokens"] = max_tokens
 

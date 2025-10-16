@@ -52,7 +52,12 @@ class Tool:
 
 # --- End Base Tool Definition ---
 
-from ...core.base.abstractions import AggregateSearchResult  # Relative import
+try:
+    from src.core.base.abstractions import AggregateSearchResult
+except ImportError:
+    from ...core.base.abstractions import (  # Fallback relative import
+        AggregateSearchResult,
+    )
 
 logger = logging.getLogger(__name__)
 

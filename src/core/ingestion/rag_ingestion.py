@@ -79,7 +79,7 @@ load_dotenv()
 
 OPENAI_API_KEY = os.getenv("OPEN_AI_KEY")
 OPENAI_CHAT_MODEL = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
-OPENAI_SUMMARY_MODEL = os.getenv("OPENAI_SUMMARY_MODEL", "gpt-4.1-nano")
+OPENAI_SUMMARY_MODEL = os.getenv("OPENAI_SUMMARY_MODEL", "gpt-4o-mini")
 OPENAI_EMBEDDING_MODEL = os.getenv("OPENAI_EMBEDDING_MODEL", "text-embedding-3-large")
 OPENAI_EMBEDDING_DIMENSIONS = 3072
 
@@ -230,7 +230,9 @@ class PDFParser:
 
     def _load_vision_prompt(self) -> str:
         try:
-            prompt_file_path = Path("./prompts") / "vision_img.yaml"
+            prompt_file_path = (
+                Path(__file__).parent.parent / "prompts" / "vision_img.yaml"
+            )
             with open(prompt_file_path, "r") as f:
                 prompt_data = yaml.safe_load(f)
 
@@ -1606,8 +1608,9 @@ class ChunkingEmbeddingPDFProcessor:
             print(
                 f"Tabular file ({file_extension}) detected. Skipping KG extraction and enrichment."
             )
-        #   enriched_text = chunk_text
-        #   chunk_entities, chunk_relationships = [], []
+            # For tabular files, skip all knowledge extraction
+            enriched_text = chunk_text
+            chunk_entities, chunk_relationships, chunk_hierarchies = [], [], []
 
         elif is_ocr_pdf:
             print(
@@ -1634,12 +1637,20 @@ class ChunkingEmbeddingPDFProcessor:
             ):
                 contextual_summary = user_provided_doc_summary
 
-            # Only perform KG extraction for OCR PDFs, no enrichment
+            # Perform KG and hierarchy extraction for OCR PDFs, no enrichment
             try:
-                kg_result = await self._extract_knowledge_graph(
-                    chunk_text, contextual_summary
+                kg_task = asyncio.create_task(
+                    self._extract_knowledge_graph(chunk_text, contextual_summary)
                 )
-                if kg_result:
+                hierarchy_task = asyncio.create_task(
+                    self._extract_hierarchies(chunk_text, contextual_summary)
+                )
+
+                kg_result, hierarchy_result = await asyncio.gather(
+                    kg_task, hierarchy_task, return_exceptions=True
+                )
+
+                if not isinstance(kg_result, Exception) and kg_result:
                     chunk_entities, chunk_relationships = kg_result
                     print(
                         f"KG extracted for OCR PDF chunk (Page {page_num}, Index {chunk_idx_on_page}): {len(chunk_entities)} entities, {len(chunk_relationships)} relationships."
@@ -1649,11 +1660,23 @@ class ChunkingEmbeddingPDFProcessor:
                     print(
                         f"No KG extracted for OCR PDF chunk (Page {page_num}, Index {chunk_idx_on_page})."
                     )
+
+                if not isinstance(hierarchy_result, Exception) and hierarchy_result:
+                    chunk_hierarchies = hierarchy_result
+                    print(
+                        f"Hierarchies extracted for OCR PDF chunk (Page {page_num}, Index {chunk_idx_on_page}): {len(chunk_hierarchies)} hierarchies."
+                    )
+                else:
+                    chunk_hierarchies = []
+                    print(
+                        f"No hierarchies extracted for OCR PDF chunk (Page {page_num}, Index {chunk_idx_on_page})."
+                    )
+
             except Exception as e:
                 print(
-                    f"KG extraction failed for OCR PDF chunk (Page {page_num}, Index {chunk_idx_on_page}) for '{file_name}': {e}"
+                    f"KG/Hierarchy extraction failed for OCR PDF chunk (Page {page_num}, Index {chunk_idx_on_page}) for '{file_name}': {e}"
                 )
-                chunk_entities, chunk_relationships = [], []
+                chunk_entities, chunk_relationships, chunk_hierarchies = [], [], []
 
             # Use original chunk text without enrichment for OCR PDFs
             enriched_text = chunk_text
@@ -1693,12 +1716,13 @@ class ChunkingEmbeddingPDFProcessor:
                     f"DOCX file detected. Skipping chunk enrichment but performing KG extraction for '{file_name}'."
                 )
 
-                # Await only the KG task, not both tasks
+                # Await both KG and hierarchy tasks
                 try:
                     kg_result, hierarchy_result = await asyncio.gather(
-                        kg_task, hierarchy_task
+                        kg_task, hierarchy_task, return_exceptions=True
                     )
-                    if kg_result:
+
+                    if not isinstance(kg_result, Exception) and kg_result:
                         chunk_entities, chunk_relationships = kg_result
                         print(
                             f"KG extracted for DOCX chunk (Page {page_num}, Index {chunk_idx_on_page}): {len(chunk_entities)} entities, {len(chunk_relationships)} relationships."
@@ -1708,11 +1732,23 @@ class ChunkingEmbeddingPDFProcessor:
                         print(
                             f"No KG extracted for DOCX chunk (Page {page_num}, Index {chunk_idx_on_page})."
                         )
+
+                    if not isinstance(hierarchy_result, Exception) and hierarchy_result:
+                        chunk_hierarchies = hierarchy_result
+                        print(
+                            f"Hierarchies extracted for DOCX chunk (Page {page_num}, Index {chunk_idx_on_page}): {len(chunk_hierarchies)} hierarchies."
+                        )
+                    else:
+                        chunk_hierarchies = []
+                        print(
+                            f"No hierarchies extracted for DOCX chunk (Page {page_num}, Index {chunk_idx_on_page})."
+                        )
+
                 except Exception as e:
                     print(
-                        f"KG extraction failed for DOCX chunk (Page {page_num}, Index {chunk_idx_on_page}) for '{file_name}': {e}"
+                        f"KG/Hierarchy extraction failed for DOCX chunk (Page {page_num}, Index {chunk_idx_on_page}) for '{file_name}': {e}"
                     )
-                    chunk_entities, chunk_relationships = [], []
+                    chunk_entities, chunk_relationships, chunk_hierarchies = [], [], []
 
             else:
                 enrich_task = asyncio.create_task(
@@ -1916,6 +1952,7 @@ class ChunkingEmbeddingPDFProcessor:
                         "document_summary": user_provided_document_summary,
                         "entities": [],
                         "relationships": [],
+                        "hierarchies": [],
                     }
                     index_name = self.params.get("index_name")
                     action = {
@@ -3503,9 +3540,15 @@ async def handle_request(data: Message) -> FunctionResponse:
         if es_client:
             await es_client.close()
             print("Elasticsearch client closed.")
-        if aclient_openai and hasattr(aclient_openai, "aclose"):
+        if aclient_openai and hasattr(aclient_openai, "close"):
             try:
-                aclient_openai.aclose()
+                await aclient_openai.close()
+                print("OpenAI client closed.")
+            except Exception as e:
+                print(f"Error closing OpenAI client: {e}")
+        elif aclient_openai and hasattr(aclient_openai, "aclose"):
+            try:
+                await aclient_openai.aclose()
                 print("OpenAI client closed.")
             except Exception as e:
                 print(f"Error closing OpenAI client: {e}")

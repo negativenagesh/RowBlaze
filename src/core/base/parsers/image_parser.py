@@ -63,7 +63,9 @@ class ImageParser(AsyncParser):
     def _load_vision_prompt(self) -> str:
         """Load the vision prompt template from YAML file."""
         try:
-            prompt_file_path = Path("./prompts") / "vision_img.yaml"
+            prompt_file_path = (
+                Path(__file__).parent.parent.parent / "prompts" / "vision_img.yaml"
+            )
             with open(prompt_file_path, "r") as f:
                 prompt_data = yaml.safe_load(f)
 
