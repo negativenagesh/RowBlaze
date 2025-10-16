@@ -1,5 +1,5 @@
 <div align='center'>
-  <img src="RowBlaze-logo/cover.png" alt="RowBlaze Logo" width="800"/>
+  <img src="app/assets/cover.png" alt="RowBlaze Logo" width="800"/>
   <br>
   <b>RAG for Structured and Unstructured data</b>
 
