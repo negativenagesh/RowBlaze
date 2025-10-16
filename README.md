@@ -26,18 +26,17 @@
 
 <br></br>
 
-
 ## Signup/in, functionalities/available options
 
 <div align="center">
-  
+
 https://github.com/user-attachments/assets/afe00a07-0344-463a-bbb5-071e3d7f5e70
 </div>
 
 ## Agentic RAG Retrieval
 
 <div align="center">
-  
+
 https://github.com/user-attachments/assets/2c6d6aa0-139f-4f53-b54a-96d709064289
 
 </div>
@@ -113,7 +112,137 @@ streamlit run app/app.py
 
 ---
 
-### 8. Demo
+### 8. Docker Setup (Recommended for Production)
+
+RowBlaze provides a complete Docker setup with separate containers for the API, Streamlit app, and nginx reverse proxy.
+
+#### Prerequisites
+
+- Docker and Docker Compose installed
+- `.env` file configured (see step 3 above)
+
+#### Quick Start with Docker
+
+1. **Clone the repository** (if not already done):
+
+```bash
+git clone https://github.com/negativenagesh/RowBlaze.git
+cd RowBlaze
+```
+
+2. **Create your `.env` file** with the required environment variables (see step 3 above).
+
+3. **Build and run with Docker Compose**:
+
+```bash
+docker-compose up --build
+```
+
+This will start:
+
+- **API service** on port 8000 (internal)
+- **Streamlit app** on port 8501 (internal)
+- **Nginx reverse proxy** on port 80 (external access point)
+
+4. **Access the application**:
+   - Open your browser and go to `http://localhost`
+   - The nginx proxy will route requests appropriately
+
+#### Individual Container Setup
+
+If you prefer to run containers individually:
+
+**Build the API container:**
+
+```bash
+docker build -f Dockerfile.api -t rowblaze-api .
+docker run -p 8000:8000 --env-file .env rowblaze-api
+```
+
+**Build the App container:**
+
+```bash
+docker build -f Dockerfile.app -t rowblaze-app .
+docker run -p 8501:8501 --env-file .env rowblaze-app
+```
+
+**Build the Nginx container:**
+
+```bash
+docker build -f nginx/Dockerfile -t rowblaze-nginx ./nginx
+docker run -p 80:80 rowblaze-nginx
+```
+
+#### Docker Compose Configuration
+
+The `docker-compose.yml` includes:
+
+- **API service**: FastAPI backend with health checks
+- **App service**: Streamlit frontend with health checks
+- **Nginx service**: Reverse proxy for routing and load balancing
+- **Shared network**: For inter-service communication
+- **Volume mounts**: For persistent data and uploads
+
+#### Environment Variables for Docker
+
+Ensure your `.env` file includes:
+
+```env
+# API Configuration
+ROWBLAZE_API_URL=http://api:8000/api
+
+# OpenAI API
+OPEN_AI_KEY=sk-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+OPENAI_MODEL=gpt-4o-mini
+
+# Elasticsearch
+RAG_UPLOAD_ELASTIC_URL=your_elasticsearch_URL
+ELASTICSEARCH_API_KEY=your_elasticsearch_api_key
+
+# Authentication
+JWT_SECRET_KEY=your-secret-key-change-in-production
+```
+
+#### Health Checks
+
+Both containers include health checks:
+
+- **API**: `GET /api/health`
+- **App**: Streamlit's built-in health endpoint
+- **Nginx**: Basic connectivity check
+
+#### Troubleshooting Docker Setup
+
+**Container logs:**
+
+```bash
+docker-compose logs api
+docker-compose logs app
+docker-compose logs nginx
+```
+
+**Restart services:**
+
+```bash
+docker-compose restart
+```
+
+**Rebuild after changes:**
+
+```bash
+docker-compose down
+docker-compose up --build
+```
+
+**Check container status:**
+
+```bash
+docker-compose ps
+```
+
+---
+
+### 9. Demo
 
 See the demo links and screenshots at the top of this README for usage examples.
 
