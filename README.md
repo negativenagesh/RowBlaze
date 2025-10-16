@@ -69,6 +69,7 @@ Create a `.env` file in the root directory.
 Below is an example of the required variables:
 
 ```env
+OPEN_AI_KEY=xxxxxxxxxxxxxxxxx
 OPENAI_MODEL=gpt-4o-mini-2024-07-18
 OPENAI_SUMMARY_MODEL=gpt-4.1-nano-2025-04-14
 OPENAI_EMBEDDING_MODEL=text-embedding-3-large
