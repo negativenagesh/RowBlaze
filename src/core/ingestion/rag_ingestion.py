@@ -1237,24 +1237,41 @@ class ChunkingEmbeddingPDFProcessor:
         """
         Deduplicate entities based on name and type.
         Merge descriptions if entities are duplicates.
+        Uses fuzzy matching to catch variations in entity names.
         """
         if not entities:
             return []
 
+        import re
+
+        def normalize_text(text):
+            if not text:
+                return ""
+            # Remove punctuation and convert to lowercase
+            normalized = re.sub(r"[^\w\s]", "", text.lower())
+            # Replace multiple spaces with single space and strip
+            normalized = " ".join(normalized.split())
+            return normalized
+
         unique_entities = {}
 
         for entity in entities:
-            name = entity.get("name", "").strip().lower()
-            entity_type = entity.get("type", "").strip().lower()
+            name = entity.get("name", "").strip()
+            entity_type = entity.get("type", "").strip()
 
             if not name:  # Skip entities without names
                 continue
 
-            # Create a unique key based on name and type
-            key = f"{name}|{entity_type}"
+            # Normalize name for comparison
+            normalized_name = normalize_text(name)
+            normalized_type = normalize_text(entity_type)
+
+            # Create a unique key based on normalized name only (more aggressive deduplication)
+            # If you want to consider type as well, use: key = f"{normalized_name}|{normalized_type}"
+            key = normalized_name  # This will deduplicate entities with same name regardless of type
 
             if key in unique_entities:
-                # Merge descriptions if both exist
+                # Merge descriptions if both exist and are different
                 existing_desc = unique_entities[key].get("description", "").strip()
                 new_desc = entity.get("description", "").strip()
 
@@ -1276,13 +1293,13 @@ class ChunkingEmbeddingPDFProcessor:
                     ]
 
                 print(
-                    f"Merged duplicate entity: {entity.get('name')} ({entity.get('type')})"
+                    f"Merged duplicate entity: '{name}' (type: '{entity_type}') -> keeping '{unique_entities[key]['name']}' (type: '{unique_entities[key]['type']}')"
                 )
             else:
                 # Store with original casing for name and type
                 unique_entities[key] = {
-                    "name": entity.get("name", "").strip(),
-                    "type": entity.get("type", "").strip(),
+                    "name": name,
+                    "type": entity_type,
                     "description": entity.get("description", "").strip(),
                 }
 
@@ -1306,23 +1323,41 @@ class ChunkingEmbeddingPDFProcessor:
         if not relationships:
             return []
 
+        import re
+
+        def normalize_text(text):
+            if not text:
+                return ""
+            # Remove punctuation and convert to lowercase
+            normalized = re.sub(r"[^\w\s]", "", text.lower())
+            # Replace multiple spaces with single space and strip
+            normalized = " ".join(normalized.split())
+            # Replace spaces with underscores for relation names to handle "works for" vs "works_for"
+            normalized = normalized.replace(" ", "_")
+            return normalized
+
         unique_relationships = {}
 
         for rel in relationships:
-            source = rel.get("source_entity", "").strip().lower()
-            target = rel.get("target_entity", "").strip().lower()
-            relation = rel.get("relation", "").strip().lower()
+            source = rel.get("source_entity", "").strip()
+            target = rel.get("target_entity", "").strip()
+            relation = rel.get("relation", "").strip()
 
             if (
                 not source or not target or not relation
             ):  # Skip incomplete relationships
                 continue
 
-            # Create a unique key based on source, target, and relation
-            key = f"{source}|{target}|{relation}"
+            # Normalize for comparison
+            normalized_source = normalize_text(source)
+            normalized_target = normalize_text(target)
+            normalized_relation = normalize_text(relation)
+
+            # Create a unique key based on normalized source, target, and relation
+            key = f"{normalized_source}|{normalized_target}|{normalized_relation}"
 
             if key in unique_relationships:
-                # Merge descriptions if both exist
+                # Merge descriptions if both exist and are different
                 existing_desc = (
                     unique_relationships[key]
                     .get("relationship_description", "")
@@ -1347,14 +1382,14 @@ class ChunkingEmbeddingPDFProcessor:
                         unique_relationships[key]["relationship_weight"] = new_weight
 
                 print(
-                    f"Merged duplicate relationship: {rel.get('source_entity')} -> {rel.get('relation')} -> {rel.get('target_entity')}"
+                    f"Merged duplicate relationship: '{source}' -> '{relation}' -> '{target}'"
                 )
             else:
                 # Store with original casing
                 unique_relationships[key] = {
-                    "source_entity": rel.get("source_entity", "").strip(),
-                    "target_entity": rel.get("target_entity", "").strip(),
-                    "relation": rel.get("relation", "").strip(),
+                    "source_entity": source,
+                    "target_entity": target,
+                    "relation": relation,
                     "relationship_description": rel.get(
                         "relationship_description", ""
                     ).strip(),
@@ -1377,20 +1412,36 @@ class ChunkingEmbeddingPDFProcessor:
         if not hierarchies:
             return []
 
+        import re
+
+        def normalize_text(text):
+            if not text:
+                return ""
+            # Remove punctuation and convert to lowercase
+            normalized = re.sub(r"[^\w\s]", "", text.lower())
+            # Replace multiple spaces with single space and strip
+            normalized = " ".join(normalized.split())
+            return normalized
+
         unique_hierarchies = {}
 
         for hierarchy in hierarchies:
-            name = hierarchy.get("name", "").strip().lower()
-            root_type = hierarchy.get("root_type", "").strip().lower()
+            name = hierarchy.get("name", "").strip()
+            root_type = hierarchy.get("root_type", "").strip()
 
             if not name:  # Skip hierarchies without names
                 continue
 
-            # Create a unique key based on name and root_type
-            key = f"{name}|{root_type}"
+            # Normalize for comparison
+            normalized_name = normalize_text(name)
+            normalized_root_type = normalize_text(root_type)
+
+            # Create a unique key based on normalized name only (more aggressive deduplication)
+            # If you want to consider root_type as well, use: key = f"{normalized_name}|{normalized_root_type}"
+            key = normalized_name  # This will deduplicate hierarchies with same name regardless of root_type
 
             if key in unique_hierarchies:
-                # Merge descriptions
+                # Merge descriptions if both exist and are different
                 existing_desc = unique_hierarchies[key].get("description", "").strip()
                 new_desc = hierarchy.get("description", "").strip()
 
@@ -1406,14 +1457,22 @@ class ChunkingEmbeddingPDFProcessor:
                 existing_levels = unique_hierarchies[key].get("levels", [])
                 new_levels = hierarchy.get("levels", [])
 
-                # Create a set of existing level IDs to avoid duplicates
-                existing_level_ids = {level.get("id", "") for level in existing_levels}
+                # Create a set of existing level signatures to avoid duplicates
+                existing_level_sigs = set()
+                for level in existing_levels:
+                    level_name = normalize_text(level.get("name", ""))
+                    level_id = normalize_text(level.get("id", ""))
+                    sig = f"{level_name}|{level_id}"
+                    existing_level_sigs.add(sig)
 
                 for new_level in new_levels:
-                    level_id = new_level.get("id", "")
-                    if level_id and level_id not in existing_level_ids:
+                    level_name = normalize_text(new_level.get("name", ""))
+                    level_id = normalize_text(new_level.get("id", ""))
+                    sig = f"{level_name}|{level_id}"
+
+                    if sig not in existing_level_sigs:
                         existing_levels.append(new_level)
-                        existing_level_ids.add(level_id)
+                        existing_level_sigs.add(sig)
 
                 # Merge relationships (avoid duplicates)
                 existing_rels = unique_hierarchies[key].get("relationships", [])
@@ -1424,29 +1483,29 @@ class ChunkingEmbeddingPDFProcessor:
                 for rel in existing_rels:
                     source = rel.get("source", {})
                     target = rel.get("target", {})
-                    rel_type = rel.get("type", "")
-                    sig = f"{source.get('node_id', '')}|{source.get('level', '')}|{target.get('node_id', '')}|{target.get('level', '')}|{rel_type}"
+                    rel_type = normalize_text(rel.get("type", ""))
+                    sig = f"{normalize_text(source.get('node_id', ''))}|{normalize_text(source.get('level', ''))}|{normalize_text(target.get('node_id', ''))}|{normalize_text(target.get('level', ''))}|{rel_type}"
                     existing_rel_sigs.add(sig)
 
                 for new_rel in new_rels:
                     source = new_rel.get("source", {})
                     target = new_rel.get("target", {})
-                    rel_type = new_rel.get("type", "")
-                    sig = f"{source.get('node_id', '')}|{source.get('level', '')}|{target.get('node_id', '')}|{target.get('level', '')}|{rel_type}"
+                    rel_type = normalize_text(new_rel.get("type", ""))
+                    sig = f"{normalize_text(source.get('node_id', ''))}|{normalize_text(source.get('level', ''))}|{normalize_text(target.get('node_id', ''))}|{normalize_text(target.get('level', ''))}|{rel_type}"
 
                     if sig not in existing_rel_sigs:
                         existing_rels.append(new_rel)
                         existing_rel_sigs.add(sig)
 
                 print(
-                    f"Merged duplicate hierarchy: {hierarchy.get('name')} ({hierarchy.get('root_type')})"
+                    f"Merged duplicate hierarchy: '{name}' (root_type: '{root_type}') -> keeping '{unique_hierarchies[key]['name']}' (root_type: '{unique_hierarchies[key]['root_type']}')"
                 )
             else:
                 # Store with original casing
                 unique_hierarchies[key] = {
-                    "name": hierarchy.get("name", "").strip(),
+                    "name": name,
                     "description": hierarchy.get("description", "").strip(),
-                    "root_type": hierarchy.get("root_type", "").strip(),
+                    "root_type": root_type,
                     "levels": hierarchy.get("levels", []),
                     "relationships": hierarchy.get("relationships", []),
                 }
@@ -1549,6 +1608,7 @@ class ChunkingEmbeddingPDFProcessor:
         print(
             f"Successfully applied document-level deduplication to {len(updated_chunks)} chunks for '{file_name}'"
         )
+        return updated_chunks
         return updated_chunks
 
     async def _extract_knowledge_graph(
@@ -2834,17 +2894,32 @@ class ChunkingEmbeddingPDFProcessor:
             )
             processing_tasks.append(task)
 
-        num_successfully_processed = 0
+        # Collect all processed chunks first for document-level deduplication
+        processed_chunks = []
         for future in asyncio.as_completed(processing_tasks):
             try:
                 es_action = await future
                 if es_action:
-                    yield es_action
-                    num_successfully_processed += 1
+                    processed_chunks.append(es_action)
             except Exception as e:
                 print(
                     f"Error processing a chunk future for DOCX file '{file_name}': {e}"
                 )
+
+        # Apply document-level deduplication across all chunks
+        if processed_chunks:
+            print(
+                f"Applying document-level deduplication across {len(processed_chunks)} chunks for DOCX file '{file_name}'"
+            )
+            processed_chunks = self._apply_document_level_deduplication(
+                processed_chunks, file_name
+            )
+
+        # Yield the deduplicated chunks
+        num_successfully_processed = 0
+        for es_action in processed_chunks:
+            yield es_action
+            num_successfully_processed += 1
 
         print(
             f"Finished processing for DOCX file '{file_name}'. Successfully processed and yielded {num_successfully_processed}/{len(all_raw_chunks_with_meta)} chunks."
@@ -2995,10 +3070,30 @@ class ChunkingEmbeddingPDFProcessor:
             )
             processing_tasks.append(task)
 
+        # Collect all processed chunks first for document-level deduplication
+        processed_chunks = []
         for future in asyncio.as_completed(processing_tasks):
-            es_action = await future
-            if es_action:
-                yield es_action
+            try:
+                es_action = await future
+                if es_action:
+                    processed_chunks.append(es_action)
+            except Exception as e:
+                print(
+                    f"Error processing a chunk future for ODT file '{file_name}': {e}"
+                )
+
+        # Apply document-level deduplication across all chunks
+        if processed_chunks:
+            print(
+                f"Applying document-level deduplication across {len(processed_chunks)} chunks for ODT file '{file_name}'"
+            )
+            processed_chunks = self._apply_document_level_deduplication(
+                processed_chunks, file_name
+            )
+
+        # Yield the deduplicated chunks
+        for es_action in processed_chunks:
+            yield es_action
 
     async def process_txt(
         self,
@@ -3052,15 +3147,30 @@ class ChunkingEmbeddingPDFProcessor:
                 )
                 processing_tasks.append(task)
 
-            num_successfully_processed = 0
+            # Collect all processed chunks first for document-level deduplication
+            processed_chunks = []
             for future in asyncio.as_completed(processing_tasks):
                 try:
                     es_action = await future
                     if es_action:
-                        yield es_action
-                        num_successfully_processed += 1
+                        processed_chunks.append(es_action)
                 except Exception as e:
                     print(f"Error processing a chunk future for '{file_name}': {e}")
+
+            # Apply document-level deduplication across all chunks
+            if processed_chunks:
+                print(
+                    f"Applying document-level deduplication across {len(processed_chunks)} chunks for TXT file '{file_name}'"
+                )
+                processed_chunks = self._apply_document_level_deduplication(
+                    processed_chunks, file_name
+                )
+
+            # Yield the deduplicated chunks
+            num_successfully_processed = 0
+            for es_action in processed_chunks:
+                yield es_action
+                num_successfully_processed += 1
 
             print(
                 f"Finished processing for '{file_name}'. Successfully processed and yielded {num_successfully_processed}/{len(all_raw_chunks_with_meta)} chunks."
@@ -3102,7 +3212,14 @@ class ChunkingEmbeddingPDFProcessor:
                 print(f"No chunks generated from CSV '{file_name}'. Aborting.")
                 return
 
-            # Process each chunk through the pipeline
+            # Generate document summary first
+            full_document_text = "\n".join(rows)
+            llm_generated_doc_summary = await self._generate_document_summary(
+                full_document_text
+            )
+
+            # Process each chunk through the pipeline and collect results
+            processed_chunks = []
             for chunk_idx, chunk_data in enumerate(chunks):
                 chunk_text = chunk_data["text"]
                 chunk_context = chunk_data.get("context", "")
@@ -3111,13 +3228,6 @@ class ChunkingEmbeddingPDFProcessor:
                 full_chunk_text = (
                     f"{chunk_context}\n\n{chunk_text}" if chunk_context else chunk_text
                 )
-
-                # Generate document summary
-                if chunk_idx == 0:
-                    full_document_text = "\n".join(rows)
-                    llm_generated_doc_summary = await self._generate_document_summary(
-                        full_document_text
-                    )
 
                 # Process through individual chunk pipeline
                 raw_chunk_info = {
@@ -3140,7 +3250,20 @@ class ChunkingEmbeddingPDFProcessor:
                 )
 
                 if es_action:
-                    yield es_action
+                    processed_chunks.append(es_action)
+
+            # Apply document-level deduplication across all chunks
+            if processed_chunks:
+                print(
+                    f"Applying document-level deduplication across {len(processed_chunks)} chunks for CSV file '{file_name}'"
+                )
+                processed_chunks = self._apply_document_level_deduplication(
+                    processed_chunks, file_name
+                )
+
+            # Yield the deduplicated chunks
+            for es_action in processed_chunks:
+                yield es_action
 
         except Exception as e:
             print(f"Error in semantic CSV processing for '{file_name}': {e}")
@@ -3240,7 +3363,8 @@ class ChunkingEmbeddingPDFProcessor:
                 full_document_text
             )
 
-            # Process each generated chunk through the standard pipeline
+            # Process each generated chunk through the standard pipeline and collect results
+            processed_chunks = []
             for chunk_idx, chunk_data in enumerate(chunks):
                 chunk_text = chunk_data["text"]
                 raw_chunk_info = {
@@ -3261,7 +3385,20 @@ class ChunkingEmbeddingPDFProcessor:
                     params=self.params,
                 )
                 if es_action:
-                    yield es_action
+                    processed_chunks.append(es_action)
+
+            # Apply document-level deduplication across all chunks
+            if processed_chunks:
+                print(
+                    f"Applying document-level deduplication across {len(processed_chunks)} chunks for XLSX file '{file_name}'"
+                )
+                processed_chunks = self._apply_document_level_deduplication(
+                    processed_chunks, file_name
+                )
+
+            # Yield the deduplicated chunks
+            for es_action in processed_chunks:
+                yield es_action
         except Exception as e:
             print(f"Error in semantic XLSX processing for '{file_name}': {e}")
             traceback.print_exc()
