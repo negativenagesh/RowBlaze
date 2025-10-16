@@ -69,18 +69,29 @@ Create a `.env` file in the root directory.
 Below is an example of the required variables:
 
 ```env
-# OpenAI API
-OPEN_AI_KEY=sk-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
-OPENAI_MODEL=gpt-4o-mini
-OPENAI_SUMMARY_MODEL=gpt-4o-mini
+OPENAI_MODEL=gpt-4o-mini-2024-07-18
+OPENAI_SUMMARY_MODEL=gpt-4.1-nano-2025-04-14
 OPENAI_EMBEDDING_MODEL=text-embedding-3-large
+OPENAI_EMBEDDING_DIMENSIONS=3072
+OPENAI_BASE_DIMENSION=3072
 
-# Elasticsearch
-RAG_UPLOAD_ELASTIC_URL=your_elasticsearch_URL_from_elasticsearch_cloud
-ELASTICSEARCH_API_KEY=your_elasticsearch_api_key
+CHUNK_SIZE_TOKENS = 1024 
+CHUNK_OVERLAP_TOKENS = 512 
+FORWARD_CHUNKS = 3
+BACKWARD_CHUNKS = 3
+CHARS_PER_TOKEN_ESTIMATE = 4 
+SUMMARY_MAX_TOKENS = 1024
 
-# (Optional) Local reranker model
-RERANKER_MODEL_ID=BAAI/bge-reranker-base
+SEMANTIC_NEIGHBORS=10
+SEMANTIC_SIMILARITY_THRESHOLD=0.7
+
+RAG_UPLOAD_ELASTIC_URL=xxxxxxx
+ELASTICSEARCH_API_KEY=xxxxxxxx
+
+MISTRAL_API_KEY=xxxx
+
+JWT_SECRET_KEY=xxxxxxx
+
 ```
 
 ---
