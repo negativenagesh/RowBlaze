@@ -34,6 +34,14 @@
 https://github.com/user-attachments/assets/afe00a07-0344-463a-bbb5-071e3d7f5e70
 </div>
 
+## Agentic RAG Retrieval
+
+<div align="center">
+  
+https://github.com/user-attachments/assets/2c6d6aa0-139f-4f53-b54a-96d709064289
+
+</div>
+
 ## Setup locally
 
 ### 1. Clone and star the Repository
