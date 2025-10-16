@@ -28,7 +28,7 @@
 
 ## Signup/in, functionalities/available options
 
-<video controls width="800" src="Screen%20Recording%202025-10-16%20at%2001.48.39.mov"></video>
+<video controls width="800" src="demologin/functions.mp4"></video>
 
 ## Setup locally
 
