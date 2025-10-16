@@ -1,7 +1,7 @@
 <div align='center'>
   <img src="app/assets/cover.png" alt="RowBlaze Logo" width="800"/>
   <br>
-  <b>RAG for Structured and Unstructured data</b>
+  <b>Most accurate Multimodal Agentic RAG for Structured and Unstructured data</b>
 
 </div>
 
