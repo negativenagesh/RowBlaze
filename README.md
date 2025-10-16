@@ -26,9 +26,13 @@
 
 <br></br>
 
+
 ## Signup/in, functionalities/available options
 
-[Demo Video](demologin/functions.mp4)
+<div align="center">
+  
+https://github.com/user-attachments/assets/afe00a07-0344-463a-bbb5-071e3d7f5e70
+</div>
 
 ## Setup locally
 
