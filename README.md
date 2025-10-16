@@ -28,7 +28,7 @@
 
 ## Signup/in, functionalities/available options
 
-<video controls width="800" src="demologin/functions.mp4"></video>
+<video controls width="800" src="./demologin/functions.mp4"></video>
 
 ## Setup locally
 
