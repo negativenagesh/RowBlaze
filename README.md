@@ -678,6 +678,7 @@ async def ingest_document(
 ```
 
 **Process Flow**:
+
 - **Authentication**: Validates user credentials via JWT tokens
 - **File Validation**: Checks file type against supported formats
 - **Content Hashing**: Generates SHA256 hash for deduplication
@@ -695,6 +696,7 @@ def _generate_doc_id_from_content(content_bytes: bytes) -> str:
 ```
 
 **Key Features**:
+
 - **Content-based hashing** prevents duplicate document ingestion
 - **Consistent identification** across multiple uploads of same file
 - **Traceability** throughout the entire processing pipeline
@@ -704,21 +706,25 @@ def _generate_doc_id_from_content(content_bytes: bytes) -> str:
 RowBlaze supports a comprehensive range of document types:
 
 **Text Documents**:
+
 - **PDF**: Standard and OCR-based (scanned documents)
 - **DOC/DOCX**: Microsoft Word documents with full formatting preservation
 - **ODT**: OpenDocument text files
 - **TXT**: Plain text files
 
 **Structured Data**:
+
 - **CSV**: Comma-separated values with semantic chunking
 - **XLSX**: Excel spreadsheets with intelligent table processing
 
 **Images**:
+
 - **JPG, PNG, GIF, BMP, WebP, HEIC, TIFF**: Vision-based content extraction
 
 ### Stage 1: File Intake & Preprocessing
 
 #### Document ID Generation
+
 ```python
 def _generate_doc_id_from_content(content_bytes: bytes) -> str:
     """Generates a SHA256 hash for the given byte content."""
@@ -728,11 +734,13 @@ def _generate_doc_id_from_content(content_bytes: bytes) -> str:
 ```
 
 **Key Features**:
+
 - **Content-based hashing** ensures identical documents get the same ID
 - **Deduplication prevention** at the document level
 - **Traceability** throughout the entire pipeline
 
 #### File Type Detection & Routing
+
 The system automatically detects file types and routes to specialized processors:
 
 ```python
@@ -750,6 +758,7 @@ elif file_extension == ".xlsx":
 #### PDF Processing (`PDFParser` class)
 
 **Multi-Modal Extraction**:
+
 ```python
 async def ingest(self, data: bytes) -> AsyncGenerator[Tuple[str, int], None]:
     # 1. Extract text from each page
@@ -765,6 +774,7 @@ async def ingest(self, data: bytes) -> AsyncGenerator[Tuple[str, int], None]:
 ```
 
 **Advanced Features**:
+
 - **Dual-library approach**: Uses both `pdfplumber` and `PyMuPDF` for comprehensive extraction
 - **Table-to-Markdown conversion**: Preserves table structure for downstream processing
 - **Vision-based image description**: Uses OpenAI Vision API to generate detailed image descriptions
@@ -773,6 +783,7 @@ async def ingest(self, data: bytes) -> AsyncGenerator[Tuple[str, int], None]:
 #### Structured Data Processing
 
 **CSV Semantic Chunking**:
+
 ```python
 async def _create_semantic_csv_chunks(self, header_row: str, data_rows: List[str], file_name: str):
     # Creates context-aware chunks preserving header-row relationships
@@ -781,6 +792,7 @@ async def _create_semantic_csv_chunks(self, header_row: str, data_rows: List[str
 ```
 
 **XLSX Advanced Processing**:
+
 ```python
 async def _create_semantic_xlsx_chunks(self, data_rows: List[List[str]], file_name: str):
     # Intelligent row batching with header preservation
@@ -789,6 +801,7 @@ async def _create_semantic_xlsx_chunks(self, data_rows: List[List[str]], file_na
 ```
 
 **Key Innovations**:
+
 - **Header context preservation**: Each chunk includes column headers for context
 - **Token-aware batching**: Dynamically calculates optimal rows per chunk
 - **Semantic integrity**: Maintains meaningful data relationships across chunks
@@ -796,6 +809,7 @@ async def _create_semantic_xlsx_chunks(self, data_rows: List[List[str]], file_na
 #### Image Processing (`ImageParser` class)
 
 **Vision-Based Content Extraction**:
+
 ```python
 async def ingest(self, data: bytes, filename: str = None) -> AsyncGenerator[str, None]:
     # Uses OpenAI Vision API to generate detailed descriptions
@@ -819,6 +833,7 @@ else:
 ```
 
 **Chunking Features**:
+
 - **Token-based splitting**: Uses `tiktoken` for accurate token counting
 - **Recursive character splitting**: Preserves semantic boundaries
 - **Context-aware separators**: Prioritizes natural break points (`\n|`, `\n`, `|`, `. `)
@@ -827,6 +842,7 @@ else:
 #### Page-Aware Chunking
 
 For documents with page structure:
+
 ```python
 async def _generate_all_raw_chunks_from_doc(self, doc_text: str, file_name: str, doc_id: str, page_breaks: List[int] = None):
     # Assigns accurate page numbers to chunks
@@ -839,6 +855,7 @@ async def _generate_all_raw_chunks_from_doc(self, doc_text: str, file_name: str,
 #### Document Summarization
 
 **Comprehensive Document Analysis**:
+
 ```python
 async def _generate_document_summary(self, full_document_text: str) -> str:
     # Uses GPT-4o-mini to create high-level document overviews
@@ -849,6 +866,7 @@ async def _generate_document_summary(self, full_document_text: str) -> str:
 #### Chunk Enrichment
 
 **Context-Aware Enhancement**:
+
 ```python
 async def _enrich_chunk_content(self, chunk_text: str, document_summary: str,
                                preceding_chunks_texts: List[str],
@@ -859,6 +877,7 @@ async def _enrich_chunk_content(self, chunk_text: str, document_summary: str,
 ```
 
 **Enrichment Strategy**:
+
 - **Contextual awareness**: Uses 3 preceding and 3 succeeding chunks for context
 - **Document-level context**: Incorporates overall document summary
 - **Selective application**: Skips enrichment for tabular data and OCR content to preserve accuracy
@@ -868,6 +887,7 @@ async def _enrich_chunk_content(self, chunk_text: str, document_summary: str,
 #### Entity and Relationship Extraction
 
 **Structured Knowledge Mining**:
+
 ```python
 async def _extract_knowledge_graph(self, chunk_text: str, document_summary: str) -> Tuple[List[Dict], List[Dict]]:
     # Uses prompt-engineered LLM calls to extract entities and relationships
@@ -876,6 +896,7 @@ async def _extract_knowledge_graph(self, chunk_text: str, document_summary: str)
 ```
 
 **XML-Based Extraction Pipeline**:
+
 ```python
 def _parse_graph_xml(self, xml_string: str) -> Tuple[List[Dict], List[Dict]]:
     # Robust XML parsing with fallback regex extraction
@@ -886,6 +907,7 @@ def _parse_graph_xml(self, xml_string: str) -> Tuple[List[Dict], List[Dict]]:
 #### Hierarchical Structure Detection
 
 **Advanced Hierarchy Extraction**:
+
 ```python
 async def _extract_hierarchies(self, chunk_text: str, document_summary: str) -> List[Dict]:
     # Identifies organizational structures, taxonomies, and nested relationships
@@ -898,6 +920,7 @@ async def _extract_hierarchies(self, chunk_text: str, document_summary: str) -> 
 **Multi-Level Deduplication**:
 
 1. **Chunk-Level Deduplication**:
+
 ```python
 def _deduplicate_entities(self, entities: List[Dict]) -> List[Dict]:
     # Normalizes entity names and types for comparison
@@ -906,6 +929,7 @@ def _deduplicate_entities(self, entities: List[Dict]) -> List[Dict]:
 ```
 
 2. **Document-Level Deduplication**:
+
 ```python
 def _apply_document_level_deduplication(self, processed_chunks: List[Dict], file_name: str):
     # Ensures consistency across entire document
@@ -914,6 +938,7 @@ def _apply_document_level_deduplication(self, processed_chunks: List[Dict], file
 ```
 
 **Deduplication Features**:
+
 - **Fuzzy matching**: Handles variations in entity names and types
 - **Description merging**: Combines information from duplicate entities
 - **Relationship consolidation**: Merges similar relationships with weight preservation
@@ -924,6 +949,7 @@ def _apply_document_level_deduplication(self, processed_chunks: List[Dict], file
 #### Multi-Modal Embedding Strategy
 
 **Comprehensive Vector Generation**:
+
 ```python
 async def _generate_embeddings(self, texts: List[str]) -> List[List[float]]:
     # Generates embeddings for chunk text and entity descriptions
@@ -932,6 +958,7 @@ async def _generate_embeddings(self, texts: List[str]) -> List[List[float]]:
 ```
 
 **Embedding Applications**:
+
 - **Chunk embeddings**: For semantic similarity search
 - **Entity description embeddings**: For knowledge graph semantic search
 - **Batch processing**: Efficient API usage with proper error handling
@@ -942,6 +969,7 @@ async def _generate_embeddings(self, texts: List[str]) -> List[List[float]]:
 #### Dynamic Schema Management
 
 **Intelligent Index Creation**:
+
 ```python
 async def ensure_es_index_exists(client: Any, index_name: str, mappings_body: Dict):
     # Creates indices with optimized mappings
@@ -950,6 +978,7 @@ async def ensure_es_index_exists(client: Any, index_name: str, mappings_body: Di
 ```
 
 **Advanced Mapping Structure**:
+
 ```python
 CHUNKED_PDF_MAPPINGS = {
     "mappings": {
@@ -971,12 +1000,14 @@ CHUNKED_PDF_MAPPINGS = {
 #### Bulk Ingestion Pipeline
 
 **Efficient Data Loading**:
+
 ```python
 # Bulk ingestion with comprehensive error handling
 successes, response = await async_bulk(es_client, actions_for_es, raise_on_error=False)
 ```
 
 **Ingestion Features**:
+
 - **Bulk operations**: Efficient batch processing for large documents
 - **Error resilience**: Detailed error reporting and partial success handling
 - **Resource management**: Proper cleanup of connections and temporary files
@@ -987,6 +1018,7 @@ successes, response = await async_bulk(es_client, actions_for_es, raise_on_error
 #### Processing Optimization
 
 **File-Type Specific Optimizations**:
+
 - **PDF batching**: Large PDFs processed in 100-page batches to prevent memory issues
 - **Concurrent processing**: Parallel chunk processing for improved performance
 - **Resource management**: Automatic cleanup of temporary files and connections
@@ -995,6 +1027,7 @@ successes, response = await async_bulk(es_client, actions_for_es, raise_on_error
 #### Content Quality Controls
 
 **Processing Safeguards**:
+
 - **OCR repetition cleaning**: Removes common OCR artifacts and repeated patterns
 - **Content validation**: Ensures chunks meet minimum quality thresholds
 - **Embedding validation**: Verifies successful embedding generation before indexing
@@ -1005,6 +1038,7 @@ successes, response = await async_bulk(es_client, actions_for_es, raise_on_error
 #### API Integration (`api/routes/ingestion.py`)
 
 **RESTful Ingestion Endpoint**:
+
 ```python
 @router.post("/ingest", response_model=IngestionResponse)
 async def ingest_document(
@@ -1021,6 +1055,7 @@ async def ingest_document(
 #### Streamlit Integration (`app/app.py`)
 
 **User-Friendly Upload Interface**:
+
 - **Drag-and-drop file upload** with format validation
 - **Real-time processing status** with progress indicators
 - **Document options configuration** (OCR, structured PDF, descriptions)
@@ -1029,12 +1064,14 @@ async def ingest_document(
 ### Performance Characteristics
 
 **Scalability Features**:
+
 - **Asynchronous processing**: Non-blocking I/O for high throughput
 - **Memory efficiency**: Streaming processing for large documents
 - **Batch optimization**: Intelligent batching for API efficiency
 - **Resource pooling**: Efficient client connection management
 
 **Quality Metrics**:
+
 - **High accuracy**: Multi-modal extraction ensures comprehensive content capture
 - **Consistency**: Document-level deduplication maintains data integrity
 - **Traceability**: Complete audit trail from source to indexed content
@@ -1074,6 +1111,7 @@ async def ingest_document(
 ```
 
 **Process Flow**:
+
 - **Authentication**: Validates user credentials via JWT tokens
 - **File Validation**: Checks file type against supported formats
 - **Content Hashing**: Generates SHA256 hash for deduplication
@@ -1091,6 +1129,7 @@ def _generate_doc_id_from_content(content_bytes: bytes) -> str:
 ```
 
 **Key Features**:
+
 - **Content-based hashing** prevents duplicate document ingestion
 - **Consistent identification** across multiple uploads of same file
 - **Traceability** throughout the entire processing pipeline
@@ -1100,16 +1139,18 @@ def _generate_doc_id_from_content(content_bytes: bytes) -> str:
 RowBlaze supports a comprehensive range of document types:
 
 **Text Documents**:
+
 - **PDF**: Standard and OCR-based (scanned documents)
 - **DOC/DOCX**: Microsoft Word documents with full formatting preservation
 - **ODT**: OpenDocument text files
 - **TXT**: Plain text files
 
 **Structured Data**:
+
 - **CSV**: Comma-separated values with semantic chunking
 - **XLSX**: Excel spreadsheets with intelligent table processing
 
-**Images*
+\*_Images_
 
 ---
 
@@ -1318,5 +1359,685 @@ RowBlaze’s retrieval engine is designed to deliver accurate, explainable, and 
 5. Context Formatting:
 
 - Markdown formatting, citation management
+
+---
+
+## API Architecture & Endpoints
+
+RowBlaze provides a comprehensive REST API built with FastAPI that handles authentication, document ingestion, retrieval, and chat management. The API is designed with security, scalability, and ease of use in mind.
+
+### API Overview
+
+The API is structured around four main modules:
+
+- **Authentication API** (`/api/auth/*`): User management and JWT-based authentication
+- **Ingestion API** (`/api/ingest`): Document upload and processing
+- **Retrieval API** (`/api/query-*`): RAG-based question answering
+- **Chat API** (`/api/chat/*`): Conversation history management
+
+### Base Configuration
+
+**API Base URL**: `http://localhost:8000/api` (development) or your deployed domain
+**API Version**: v1
+**Authentication**: JWT Bearer tokens
+**Content Types**: JSON, multipart/form-data (for file uploads)
+
+---
+
+## Authentication API (`/api/auth/*`)
+
+The authentication system provides secure user registration, login, and session management using JWT tokens.
+
+### Endpoints
+
+#### 1. User Registration
+
+```http
+POST /api/auth/register
+Content-Type: application/json
+
+{
+  "email": "user@example.com",
+  "password": "securepassword123"
+}
+```
+
+**Response:**
+
+```json
+{
+  "access_token": "eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9...",
+  "token_type": "bearer",
+  "user": {
+    "id": "user_123",
+    "email": "user@example.com",
+    "created_at": "2024-01-01T00:00:00Z"
+  }
+}
+```
+
+**Features:**
+
+- Email format validation with regex patterns
+- Password strength requirements (8+ chars, letters + numbers)
+- Automatic user ID generation
+- BCrypt password hashing
+- Duplicate email prevention
+
+#### 2. User Login
+
+```http
+POST /api/auth/login
+Content-Type: application/json
+
+{
+  "email": "user@example.com",
+  "password": "securepassword123"
+}
+```
+
+**Response:** Same as registration
+
+**Features:**
+
+- Email/password authentication
+- JWT token generation with configurable expiration
+- Last login timestamp tracking
+- Account status validation (disabled accounts rejected)
+
+#### 3. OAuth2 Token Endpoint (Alternative)
+
+```http
+POST /api/auth/token
+Content-Type: application/x-www-form-urlencoded
+
+username=user@example.com&password=securepassword123
+```
+
+**OAuth2-compatible endpoint for standard authentication flows**
+
+#### 4. Get Current User Info
+
+```http
+GET /api/auth/me
+Authorization: Bearer <jwt_token>
+```
+
+**Response:**
+
+```json
+{
+  "id": "user_123",
+  "email": "user@example.com",
+  "created_at": "2024-01-01T00:00:00Z",
+  "last_login": "2024-01-01T12:00:00Z",
+  "email_verified": false
+}
+```
+
+#### 5. Logout
+
+```http
+POST /api/auth/logout
+Authorization: Bearer <jwt_token>
+```
+
+**Note:** Logout is client-side (token disposal). Server-side token blacklisting can be implemented for enhanced security.
+
+### Security Features
+
+- **JWT Tokens**: HS256 algorithm with configurable secret
+- **Password Hashing**: BCrypt with salt generation
+- **Input Validation**: Pydantic models with custom validators
+- **Rate Limiting**: Can be implemented with middleware
+- **CORS**: Configurable cross-origin resource sharing
+
+---
+
+## Ingestion API (`/api/ingest`)
+
+The ingestion API handles document upload, processing, and indexing into Elasticsearch with comprehensive content extraction and knowledge graph generation.
+
+### Document Upload Endpoint
+
+```http
+POST /api/ingest
+Authorization: Bearer <jwt_token>
+Content-Type: multipart/form-data
+
+file: <binary_file_data>
+index_name: "user_documents"
+description: "Optional document description"
+is_ocr_pdf: false
+is_structured_pdf: true
+model: "gpt-4o-mini"
+max_tokens: 16384
+```
+
+**Response:**
+
+```json
+{
+  "success": true,
+  "message": "Successfully processed document.pdf",
+  "document_id": "sha256_hash_of_content"
+}
+```
+
+### Supported File Types
+
+**Text Documents:**
+
+- PDF (standard and OCR-scanned)
+- DOC/DOCX (Microsoft Word)
+- ODT (OpenDocument Text)
+- TXT (Plain text)
+
+**Structured Data:**
+
+- CSV (Comma-separated values)
+- XLSX (Excel spreadsheets)
+
+**Images:**
+
+- JPG, JPEG, PNG, GIF, BMP, WebP, HEIC, TIFF
+
+### Processing Pipeline
+
+1. **Authentication & Validation**
+
+   - JWT token verification
+   - File type validation
+   - Content hash generation for deduplication
+
+2. **Background Processing**
+
+   - Asynchronous document processing
+   - Specialized parser selection based on file type
+   - Multi-modal content extraction (text, tables, images)
+
+3. **Content Enhancement**
+
+   - LLM-powered document summarization
+   - Chunk enrichment with contextual information
+   - Knowledge graph extraction (entities, relationships, hierarchies)
+
+4. **Indexing**
+   - Embedding generation using OpenAI models
+   - Elasticsearch bulk ingestion
+   - Schema management and optimization
+
+### File Management Endpoints
+
+#### List Indexed Files
+
+```http
+GET /api/files/{index_name}
+Authorization: Bearer <jwt_token>
+```
+
+**Response:**
+
+```json
+["document1.pdf", "spreadsheet.xlsx", "report.docx"]
+```
+
+#### Health Check
+
+```http
+GET /api/health
+```
+
+**Response:**
+
+```json
+{
+  "status": "ok",
+  "message": "API is running"
+}
+```
+
+---
+
+## Retrieval API (`/api/query-*`)
+
+The retrieval API provides both Normal RAG and Agentic RAG capabilities for intelligent question answering over indexed documents.
+
+### Normal RAG Endpoint
+
+```http
+POST /api/query-rag
+Authorization: Bearer <jwt_token>
+Content-Type: application/json
+
+{
+  "question": "What are the key findings in the research report?",
+  "index_name": "user_documents",
+  "top_k_chunks": 10,
+  "enable_references_citations": true,
+  "deep_research": false,
+  "auto_chunk_sizing": true,
+  "model": "gpt-4o-mini",
+  "max_tokens": 16384
+}
+```
+
+**Response:**
+
+```json
+{
+  "question": "What are the key findings in the research report?",
+  "answer": "Based on the research report, the key findings include...\n\n**Source:** document.pdf (Page 5)",
+  "context": [
+    {
+      "text": "Relevant chunk content...",
+      "score": 0.95,
+      "file_name": "document.pdf",
+      "page_number": 5,
+      "entities": [...],
+      "relationships": [...]
+    }
+  ],
+  "cited_files": ["document.pdf"],
+  "metadata": {
+    "query_type": "summary_extraction",
+    "chunks_retrieved": 10,
+    "processing_time": 2.3
+  }
+}
+```
+
+### Agentic RAG Endpoint
+
+```http
+POST /api/agent-query
+Authorization: Bearer <jwt_token>
+Content-Type: application/json
+
+{
+  "question": "Compare the financial performance across different quarters",
+  "index_name": "user_documents",
+  "top_k_chunks": 20,
+  "enable_references_citations": true,
+  "deep_research": true,
+  "model": "gpt-4o-mini",
+  "max_tokens": 16384
+}
+```
+
+**Response:**
+
+```json
+{
+  "question": "Compare the financial performance across different quarters",
+  "answer": "Comprehensive analysis with multi-step reasoning...",
+  "context": [...],
+  "cited_files": [...],
+  "metadata": {
+    "agent_mode": "pure_agentic_rag",
+    "query_type": "comparison",
+    "iterations_completed": 2,
+    "tools_used": ["search_file_knowledge", "vector_search", "keyword_search"],
+    "initial_retrieval_performed": false,
+    "processing_time": 8.7
+  }
+}
+```
+
+### RAG Modes Comparison
+
+| Feature        | Normal RAG       | Agentic RAG           |
+| -------------- | ---------------- | --------------------- |
+| **Speed**      | Fast (2-4s)      | Slower (5-15s)        |
+| **Complexity** | Simple queries   | Complex analysis      |
+| **Tool Usage** | Single retrieval | Multi-tool selection  |
+| **Iterations** | Single pass      | Up to 2 iterations    |
+| **Best For**   | Direct questions | Multi-faceted queries |
+
+### Advanced Retrieval Features
+
+#### Document Retrieval
+
+```http
+POST /api/query-documents
+Authorization: Bearer <jwt_token>
+
+{
+  "question": "Find information about project timelines",
+  "index_name": "user_documents",
+  "top_k_chunks": 15
+}
+```
+
+#### Final Answer Generation
+
+```http
+POST /api/generate-final-answer
+Authorization: Bearer <jwt_token>
+
+{
+  "question": "Original question",
+  "context": "Retrieved context with sources",
+  "generate_final_answer": true,
+  "enable_references_citations": true
+}
+```
+
+### Data Exploration Endpoints
+
+#### View Document Chunks
+
+```http
+GET /api/chunks/{index_name}?file_name=document.pdf
+Authorization: Bearer <jwt_token>
+```
+
+#### View Knowledge Graph
+
+```http
+GET /api/knowledge-graph/{index_name}?file_name=document.pdf
+Authorization: Bearer <jwt_token>
+```
+
+**Response:**
+
+```json
+{
+  "success": true,
+  "knowledge_graph": {
+    "entities": [
+      {
+        "name": "Company ABC",
+        "type": "Organization",
+        "description": "Technology company...",
+        "file_name": "document.pdf",
+        "page_number": 3
+      }
+    ],
+    "relationships": [
+      {
+        "source_entity": "Company ABC",
+        "relation": "acquired",
+        "target_entity": "Startup XYZ",
+        "file_name": "document.pdf"
+      }
+    ],
+    "hierarchies": [...]
+  }
+}
+```
+
+---
+
+## Chat API (`/api/chat/*`)
+
+The chat API manages conversation history and session persistence for seamless user interactions.
+
+### Chat Session Management
+
+#### Save Chat History
+
+```http
+POST /api/chat/save
+Authorization: Bearer <jwt_token>
+Content-Type: application/json
+
+{
+  "session_id": "unique_session_id",
+  "title": "Discussion about Q3 Results",
+  "messages": [
+    {
+      "role": "user",
+      "content": "What were the Q3 results?",
+      "timestamp": "2024-01-01T12:00:00Z"
+    },
+    {
+      "role": "assistant",
+      "content": "The Q3 results showed...",
+      "timestamp": "2024-01-01T12:00:05Z"
+    }
+  ]
+}
+```
+
+#### Retrieve Chat History
+
+```http
+GET /api/chat/{session_id}
+Authorization: Bearer <jwt_token>
+```
+
+**Response:**
+
+```json
+{
+  "success": true,
+  "messages": [
+    {
+      "role": "user",
+      "content": "What were the Q3 results?",
+      "timestamp": "2024-01-01T12:00:00Z"
+    },
+    {
+      "role": "assistant",
+      "content": "The Q3 results showed...",
+      "timestamp": "2024-01-01T12:00:05Z"
+    }
+  ]
+}
+```
+
+#### List All Chat Sessions
+
+```http
+GET /api/chat/list/sessions
+Authorization: Bearer <jwt_token>
+```
+
+**Response:**
+
+```json
+{
+  "success": true,
+  "sessions": [
+    {
+      "session_id": "session_123",
+      "title": "Discussion about Q3 Results",
+      "last_updated": "2024-01-01T12:00:00Z",
+      "message_count": 6
+    }
+  ]
+}
+```
+
+#### Delete Chat Session
+
+```http
+DELETE /api/chat/{session_id}
+Authorization: Bearer <jwt_token>
+```
+
+### Chat Features
+
+- **User Isolation**: Each user can only access their own chat sessions
+- **Automatic Titles**: Generated from first user message if not provided
+- **Elasticsearch Storage**: Scalable chat history persistence
+- **Session Management**: Create, read, update, delete operations
+- **Timestamp Tracking**: Automatic message and session timestamping
+
+---
+
+## CI/CD Pipeline (`.github/workflows/ci-cd.yml`)
+
+RowBlaze includes a comprehensive CI/CD pipeline that ensures code quality, security, and automated deployment.
+
+### Pipeline Stages
+
+#### 1. **Testing & Quality Assurance**
+
+```yaml
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - Python 3.11 setup with uv package manager
+      - Dependency caching for faster builds
+      - Code linting with flake8 (syntax errors, undefined names)
+      - Code formatting with Black
+      - Import sorting with isort
+      - Type checking with mypy
+      - Test execution with pytest and coverage reporting
+      - Coverage upload to Codecov
+```
+
+**Quality Gates:**
+
+- **Linting**: Catches Python syntax errors and undefined names
+- **Formatting**: Ensures consistent code style with Black
+- **Import Sorting**: Maintains organized imports with isort
+- **Type Checking**: Static type analysis with mypy
+- **Test Coverage**: Comprehensive test suite with coverage reporting
+
+#### 2. **Docker Build & Security Scanning**
+
+```yaml
+build-scan-and-push:
+  needs: test
+  if: github.ref == 'refs/heads/main'
+  steps:
+    - Multi-stage Docker builds for API, App, and Nginx
+    - GitHub Container Registry (ghcr.io) integration
+    - Trivy security scanning for vulnerabilities
+    - SARIF upload for security analysis
+    - Automated image pushing on successful builds
+```
+
+**Security Features:**
+
+- **Vulnerability Scanning**: Trivy scans for CRITICAL and HIGH severity issues
+- **SARIF Integration**: Security findings uploaded to GitHub Security tab
+- **Multi-stage Builds**: Optimized Docker images with minimal attack surface
+- **Registry Security**: Secure image storage in GitHub Container Registry
+
+#### 3. **Deployment Automation**
+
+```yaml
+deploy:
+  needs: build-scan-and-push
+  if: github.ref == 'refs/heads/main'
+  steps:
+    - Production deployment triggers
+    - Environment-specific configurations
+    - Health check validations
+```
+
+### Container Architecture
+
+#### API Container (`Dockerfile.api`)
+
+```dockerfile
+# Multi-stage build for optimized production image
+FROM python:3.11-slim AS builder
+# Virtual environment creation and dependency installation
+FROM python:3.11-slim AS final
+# Production runtime with health checks
+```
+
+**Features:**
+
+- **Multi-stage Build**: Separates build dependencies from runtime
+- **Virtual Environment**: Isolated Python dependencies
+- **Health Checks**: Automated container health monitoring
+- **Security**: Non-root user execution and minimal base image
+
+#### App Container (`Dockerfile.app`)
+
+```dockerfile
+# Streamlit application container
+# Health check via Streamlit's built-in endpoint
+# File upload directory creation with proper permissions
+```
+
+#### Nginx Container (`nginx/Dockerfile`)
+
+```dockerfile
+# Reverse proxy and load balancer
+# SSL termination and static file serving
+# Request routing between API and App containers
+```
+
+### Environment Configuration
+
+**Development:**
+
+```bash
+# Local development with hot reloading
+uv run src/core/ingestion/rag_ingestion.py
+streamlit run app/app.py
+```
+
+**Production (Docker Compose):**
+
+```bash
+docker-compose up --build
+# Orchestrates API, App, and Nginx containers
+# Shared networking and volume management
+# Health checks and restart policies
+```
+
+**Individual Containers:**
+
+```bash
+# API
+docker build -f Dockerfile.api -t rowblaze-api .
+docker run -p 8000:8000 --env-file .env rowblaze-api
+
+# App
+docker build -f Dockerfile.app -t rowblaze-app .
+docker run -p 8501:8501 --env-file .env rowblaze-app
+
+# Nginx
+docker build -f nginx/Dockerfile -t rowblaze-nginx ./nginx
+docker run -p 80:80 rowblaze-nginx
+```
+
+### Monitoring & Observability
+
+**Health Endpoints:**
+
+- **API**: `GET /api/health` - Service status and version info
+- **App**: Streamlit's `/_stcore/health` - Frontend health check
+- **Nginx**: Basic connectivity and routing validation
+
+**Logging:**
+
+- **Structured Logging**: JSON format with timestamps and levels
+- **Request Tracing**: Correlation IDs for request tracking
+- **Error Handling**: Comprehensive exception logging with stack traces
+
+**Metrics:**
+
+- **Container Health**: Docker health check status
+- **Response Times**: API endpoint performance monitoring
+- **Error Rates**: HTTP status code tracking
+- **Resource Usage**: CPU, memory, and disk utilization
+
+### Security Best Practices
+
+**Code Security:**
+
+- **Dependency Scanning**: Automated vulnerability detection
+- **Secret Management**: Environment variable configuration
+- **Input Validation**: Pydantic models with strict validation
+- **Authentication**: JWT-based secure authentication
+
+**Infrastructure Security:**
+
+- **Container Scanning**: Trivy security analysis
+- **Network Isolation**: Docker network segmentation
+- **SSL/TLS**: HTTPS encryption for production deployments
+- **Access Control**: Role-based permissions and user isolation
+
+This comprehensive CI/CD pipeline ensures that RowBlaze maintains high code quality, security standards, and reliable deployments while supporting both development and production environments.
 
 [Apache License 2.0](https://www.apache.org/licenses/LICENSE-2.0)
