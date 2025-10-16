@@ -648,7 +648,14 @@ class ChunkingEmbeddingPDFProcessor:
             xml_response = await self._call_nvidia_api(
                 payload_messages=messages, max_tokens=4000, temperature=0.1
             )
-            return self._parse_hierarchy_xml(xml_response) if xml_response else []
+
+            if xml_response:
+                hierarchies = self._parse_hierarchy_xml(xml_response)
+                # Apply deduplication
+                hierarchies = self._deduplicate_hierarchies(hierarchies)
+                return hierarchies
+            else:
+                return []
 
         if not self.aclient_openai or not self.graph_hierarchy_prompt_template:
             print(
@@ -685,7 +692,13 @@ class ChunkingEmbeddingPDFProcessor:
         print(
             f"Raw XML response from LLM for hierarchy extraction (first 500 chars):\n{xml_response_content[:500]}"
         )
-        return self._parse_hierarchy_xml(xml_response_content)
+
+        hierarchies = self._parse_hierarchy_xml(xml_response_content)
+
+        # Apply deduplication
+        hierarchies = self._deduplicate_hierarchies(hierarchies)
+
+        return hierarchies
 
     def _clean_ocr_repetitions(self, text: str) -> str:
         """Remove repetitive patterns from OCR text."""
@@ -1218,6 +1231,326 @@ class ChunkingEmbeddingPDFProcessor:
 
         return entities, relationships
 
+    def _deduplicate_entities(
+        self, entities: List[Dict[str, Any]]
+    ) -> List[Dict[str, Any]]:
+        """
+        Deduplicate entities based on name and type.
+        Merge descriptions if entities are duplicates.
+        """
+        if not entities:
+            return []
+
+        unique_entities = {}
+
+        for entity in entities:
+            name = entity.get("name", "").strip().lower()
+            entity_type = entity.get("type", "").strip().lower()
+
+            if not name:  # Skip entities without names
+                continue
+
+            # Create a unique key based on name and type
+            key = f"{name}|{entity_type}"
+
+            if key in unique_entities:
+                # Merge descriptions if both exist
+                existing_desc = unique_entities[key].get("description", "").strip()
+                new_desc = entity.get("description", "").strip()
+
+                if new_desc and new_desc not in existing_desc:
+                    if existing_desc:
+                        unique_entities[key][
+                            "description"
+                        ] = f"{existing_desc}. {new_desc}"
+                    else:
+                        unique_entities[key]["description"] = new_desc
+
+                # Keep the description_embedding from the first occurrence
+                if (
+                    "description_embedding" in entity
+                    and "description_embedding" not in unique_entities[key]
+                ):
+                    unique_entities[key]["description_embedding"] = entity[
+                        "description_embedding"
+                    ]
+
+                print(
+                    f"Merged duplicate entity: {entity.get('name')} ({entity.get('type')})"
+                )
+            else:
+                # Store with original casing for name and type
+                unique_entities[key] = {
+                    "name": entity.get("name", "").strip(),
+                    "type": entity.get("type", "").strip(),
+                    "description": entity.get("description", "").strip(),
+                }
+
+                # Preserve description_embedding if it exists
+                if "description_embedding" in entity:
+                    unique_entities[key]["description_embedding"] = entity[
+                        "description_embedding"
+                    ]
+
+        deduplicated = list(unique_entities.values())
+        print(f"Entity deduplication: {len(entities)} -> {len(deduplicated)} entities")
+        return deduplicated
+
+    def _deduplicate_relationships(
+        self, relationships: List[Dict[str, Any]]
+    ) -> List[Dict[str, Any]]:
+        """
+        Deduplicate relationships based on source, target, and relation type.
+        Merge descriptions and keep the highest weight if relationships are duplicates.
+        """
+        if not relationships:
+            return []
+
+        unique_relationships = {}
+
+        for rel in relationships:
+            source = rel.get("source_entity", "").strip().lower()
+            target = rel.get("target_entity", "").strip().lower()
+            relation = rel.get("relation", "").strip().lower()
+
+            if (
+                not source or not target or not relation
+            ):  # Skip incomplete relationships
+                continue
+
+            # Create a unique key based on source, target, and relation
+            key = f"{source}|{target}|{relation}"
+
+            if key in unique_relationships:
+                # Merge descriptions if both exist
+                existing_desc = (
+                    unique_relationships[key]
+                    .get("relationship_description", "")
+                    .strip()
+                )
+                new_desc = rel.get("relationship_description", "").strip()
+
+                if new_desc and new_desc not in existing_desc:
+                    if existing_desc:
+                        unique_relationships[key][
+                            "relationship_description"
+                        ] = f"{existing_desc}. {new_desc}"
+                    else:
+                        unique_relationships[key]["relationship_description"] = new_desc
+
+                # Keep the highest weight
+                existing_weight = unique_relationships[key].get("relationship_weight")
+                new_weight = rel.get("relationship_weight")
+
+                if new_weight is not None:
+                    if existing_weight is None or new_weight > existing_weight:
+                        unique_relationships[key]["relationship_weight"] = new_weight
+
+                print(
+                    f"Merged duplicate relationship: {rel.get('source_entity')} -> {rel.get('relation')} -> {rel.get('target_entity')}"
+                )
+            else:
+                # Store with original casing
+                unique_relationships[key] = {
+                    "source_entity": rel.get("source_entity", "").strip(),
+                    "target_entity": rel.get("target_entity", "").strip(),
+                    "relation": rel.get("relation", "").strip(),
+                    "relationship_description": rel.get(
+                        "relationship_description", ""
+                    ).strip(),
+                    "relationship_weight": rel.get("relationship_weight"),
+                }
+
+        deduplicated = list(unique_relationships.values())
+        print(
+            f"Relationship deduplication: {len(relationships)} -> {len(deduplicated)} relationships"
+        )
+        return deduplicated
+
+    def _deduplicate_hierarchies(
+        self, hierarchies: List[Dict[str, Any]]
+    ) -> List[Dict[str, Any]]:
+        """
+        Deduplicate hierarchies based on name and root_type.
+        Merge levels and relationships if hierarchies are duplicates.
+        """
+        if not hierarchies:
+            return []
+
+        unique_hierarchies = {}
+
+        for hierarchy in hierarchies:
+            name = hierarchy.get("name", "").strip().lower()
+            root_type = hierarchy.get("root_type", "").strip().lower()
+
+            if not name:  # Skip hierarchies without names
+                continue
+
+            # Create a unique key based on name and root_type
+            key = f"{name}|{root_type}"
+
+            if key in unique_hierarchies:
+                # Merge descriptions
+                existing_desc = unique_hierarchies[key].get("description", "").strip()
+                new_desc = hierarchy.get("description", "").strip()
+
+                if new_desc and new_desc not in existing_desc:
+                    if existing_desc:
+                        unique_hierarchies[key][
+                            "description"
+                        ] = f"{existing_desc}. {new_desc}"
+                    else:
+                        unique_hierarchies[key]["description"] = new_desc
+
+                # Merge levels (avoid duplicates within levels)
+                existing_levels = unique_hierarchies[key].get("levels", [])
+                new_levels = hierarchy.get("levels", [])
+
+                # Create a set of existing level IDs to avoid duplicates
+                existing_level_ids = {level.get("id", "") for level in existing_levels}
+
+                for new_level in new_levels:
+                    level_id = new_level.get("id", "")
+                    if level_id and level_id not in existing_level_ids:
+                        existing_levels.append(new_level)
+                        existing_level_ids.add(level_id)
+
+                # Merge relationships (avoid duplicates)
+                existing_rels = unique_hierarchies[key].get("relationships", [])
+                new_rels = hierarchy.get("relationships", [])
+
+                # Create a set of existing relationship signatures to avoid duplicates
+                existing_rel_sigs = set()
+                for rel in existing_rels:
+                    source = rel.get("source", {})
+                    target = rel.get("target", {})
+                    rel_type = rel.get("type", "")
+                    sig = f"{source.get('node_id', '')}|{source.get('level', '')}|{target.get('node_id', '')}|{target.get('level', '')}|{rel_type}"
+                    existing_rel_sigs.add(sig)
+
+                for new_rel in new_rels:
+                    source = new_rel.get("source", {})
+                    target = new_rel.get("target", {})
+                    rel_type = new_rel.get("type", "")
+                    sig = f"{source.get('node_id', '')}|{source.get('level', '')}|{target.get('node_id', '')}|{target.get('level', '')}|{rel_type}"
+
+                    if sig not in existing_rel_sigs:
+                        existing_rels.append(new_rel)
+                        existing_rel_sigs.add(sig)
+
+                print(
+                    f"Merged duplicate hierarchy: {hierarchy.get('name')} ({hierarchy.get('root_type')})"
+                )
+            else:
+                # Store with original casing
+                unique_hierarchies[key] = {
+                    "name": hierarchy.get("name", "").strip(),
+                    "description": hierarchy.get("description", "").strip(),
+                    "root_type": hierarchy.get("root_type", "").strip(),
+                    "levels": hierarchy.get("levels", []),
+                    "relationships": hierarchy.get("relationships", []),
+                }
+
+        deduplicated = list(unique_hierarchies.values())
+        print(
+            f"Hierarchy deduplication: {len(hierarchies)} -> {len(deduplicated)} hierarchies"
+        )
+        return deduplicated
+
+    def _apply_document_level_deduplication(
+        self, processed_chunks: List[Dict[str, Any]], file_name: str
+    ) -> List[Dict[str, Any]]:
+        """
+        Apply document-level deduplication across all chunks to ensure consistency.
+        This ensures that the same entity/relationship appears consistently across the entire document.
+        """
+        if not processed_chunks:
+            return processed_chunks
+
+        print(
+            f"Applying document-level KG deduplication for {len(processed_chunks)} chunks in '{file_name}'"
+        )
+
+        # Collect all entities, relationships, and hierarchies from all chunks
+        all_entities = []
+        all_relationships = []
+        all_hierarchies = []
+
+        for chunk in processed_chunks:
+            metadata = chunk.get("_source", {}).get("metadata", {})
+            all_entities.extend(metadata.get("entities", []))
+            all_relationships.extend(metadata.get("relationships", []))
+            all_hierarchies.extend(metadata.get("hierarchies", []))
+
+        # Apply document-level deduplication
+        deduplicated_entities = self._deduplicate_entities(all_entities)
+        deduplicated_relationships = self._deduplicate_relationships(all_relationships)
+        deduplicated_hierarchies = self._deduplicate_hierarchies(all_hierarchies)
+
+        print(f"Document-level deduplication results for '{file_name}':")
+        print(f"  Entities: {len(all_entities)} -> {len(deduplicated_entities)}")
+        print(
+            f"  Relationships: {len(all_relationships)} -> {len(deduplicated_relationships)}"
+        )
+        print(
+            f"  Hierarchies: {len(all_hierarchies)} -> {len(deduplicated_hierarchies)}"
+        )
+
+        # Create lookup maps for efficient assignment
+        entity_map = {}
+        for entity in deduplicated_entities:
+            key = f"{entity.get('name', '').strip().lower()}|{entity.get('type', '').strip().lower()}"
+            entity_map[key] = entity
+
+        relationship_map = {}
+        for rel in deduplicated_relationships:
+            key = f"{rel.get('source_entity', '').strip().lower()}|{rel.get('target_entity', '').strip().lower()}|{rel.get('relation', '').strip().lower()}"
+            relationship_map[key] = rel
+
+        hierarchy_map = {}
+        for hierarchy in deduplicated_hierarchies:
+            key = f"{hierarchy.get('name', '').strip().lower()}|{hierarchy.get('root_type', '').strip().lower()}"
+            hierarchy_map[key] = hierarchy
+
+        # Update each chunk with the deduplicated KG data
+        updated_chunks = []
+        for chunk in processed_chunks:
+            chunk_copy = chunk.copy()
+            metadata = chunk_copy.get("_source", {}).get("metadata", {})
+
+            # Find relevant entities for this chunk based on the original entities
+            chunk_entities = []
+            for original_entity in metadata.get("entities", []):
+                key = f"{original_entity.get('name', '').strip().lower()}|{original_entity.get('type', '').strip().lower()}"
+                if key in entity_map:
+                    chunk_entities.append(entity_map[key])
+
+            # Find relevant relationships for this chunk
+            chunk_relationships = []
+            for original_rel in metadata.get("relationships", []):
+                key = f"{original_rel.get('source_entity', '').strip().lower()}|{original_rel.get('target_entity', '').strip().lower()}|{original_rel.get('relation', '').strip().lower()}"
+                if key in relationship_map:
+                    chunk_relationships.append(relationship_map[key])
+
+            # Find relevant hierarchies for this chunk
+            chunk_hierarchies = []
+            for original_hierarchy in metadata.get("hierarchies", []):
+                key = f"{original_hierarchy.get('name', '').strip().lower()}|{original_hierarchy.get('root_type', '').strip().lower()}"
+                if key in hierarchy_map:
+                    chunk_hierarchies.append(hierarchy_map[key])
+
+            # Update the chunk metadata
+            metadata["entities"] = chunk_entities
+            metadata["relationships"] = chunk_relationships
+            metadata["hierarchies"] = chunk_hierarchies
+
+            updated_chunks.append(chunk_copy)
+
+        print(
+            f"Successfully applied document-level deduplication to {len(updated_chunks)} chunks for '{file_name}'"
+        )
+        return updated_chunks
+
     async def _extract_knowledge_graph(
         self, chunk_text: str, document_summary: str
     ) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
@@ -1239,7 +1572,15 @@ class ChunkingEmbeddingPDFProcessor:
             xml_response = await self._call_nvidia_api(
                 payload_messages=messages, max_tokens=4000, temperature=0.1
             )
-            return self._parse_graph_xml(xml_response) if xml_response else ([], [])
+
+            if xml_response:
+                entities, relationships = self._parse_graph_xml(xml_response)
+                # Apply deduplication
+                entities = self._deduplicate_entities(entities)
+                relationships = self._deduplicate_relationships(relationships)
+                return entities, relationships
+            else:
+                return [], []
 
         if not self.aclient_openai or not self.graph_extraction_prompt_template:
             print(
@@ -1279,7 +1620,14 @@ class ChunkingEmbeddingPDFProcessor:
         print(
             f"Raw XML response from LLM for chunk-level graph extraction (first 500 chars):\n{xml_response_content[:500]}"
         )
-        return self._parse_graph_xml(xml_response_content)
+
+        entities, relationships = self._parse_graph_xml(xml_response_content)
+
+        # Apply deduplication
+        entities = self._deduplicate_entities(entities)
+        relationships = self._deduplicate_relationships(relationships)
+
+        return entities, relationships
 
     async def _enrich_chunk_content(
         self,
@@ -2235,15 +2583,30 @@ class ChunkingEmbeddingPDFProcessor:
             )
             processing_tasks.append(task)
 
-        num_successfully_processed = 0
+        # Collect all processed chunks first for document-level deduplication
+        processed_chunks = []
         for future in asyncio.as_completed(processing_tasks):
             try:
                 es_action = await future
                 if es_action:
-                    yield es_action
-                    num_successfully_processed += 1
+                    processed_chunks.append(es_action)
             except Exception as e:
                 print(f"Error processing a chunk future for '{file_name}': {e}")
+
+        # Apply document-level deduplication across all chunks
+        if processed_chunks:
+            print(
+                f"Applying document-level deduplication across {len(processed_chunks)} chunks for '{file_name}'"
+            )
+            processed_chunks = self._apply_document_level_deduplication(
+                processed_chunks, file_name
+            )
+
+        # Yield the deduplicated chunks
+        num_successfully_processed = 0
+        for es_action in processed_chunks:
+            yield es_action
+            num_successfully_processed += 1
 
         print(
             f"Finished processing for '{file_name}'. Successfully processed and yielded {num_successfully_processed}/{len(all_raw_chunks_with_meta)} chunks."
@@ -2334,17 +2697,32 @@ class ChunkingEmbeddingPDFProcessor:
             )
             processing_tasks.append(task)
 
-        num_successfully_processed = 0
+        # Collect all processed chunks first for document-level deduplication
+        processed_chunks = []
         for future in asyncio.as_completed(processing_tasks):
             try:
                 es_action = await future
                 if es_action:
-                    yield es_action
-                    num_successfully_processed += 1
+                    processed_chunks.append(es_action)
             except Exception as e:
                 print(
                     f"Error processing a chunk future for DOC file '{file_name}': {e}"
                 )
+
+        # Apply document-level deduplication across all chunks
+        if processed_chunks:
+            print(
+                f"Applying document-level deduplication across {len(processed_chunks)} chunks for DOC file '{file_name}'"
+            )
+            processed_chunks = self._apply_document_level_deduplication(
+                processed_chunks, file_name
+            )
+
+        # Yield the deduplicated chunks
+        num_successfully_processed = 0
+        for es_action in processed_chunks:
+            yield es_action
+            num_successfully_processed += 1
 
         print(
             f"Finished processing for DOC file '{file_name}'. Successfully processed and yielded {num_successfully_processed}/{len(all_raw_chunks_with_meta)} chunks."
