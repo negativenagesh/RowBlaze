@@ -28,7 +28,7 @@
 
 ## Signup/in, functionalities/available options
 
-<video controls width="800" src="./demologin/functions.mp4"></video>
+[Demo Video](demologin/functions.mp4)
 
 ## Setup locally
 
@@ -46,7 +46,7 @@ cd RowBlaze
 ```bash
 uv init
 uv venv
-@@ -48,208 +28,41 @@ uv pip install -r requirements.txt
+uv pip install -r requirements.txt
 ```
 
 ---
