@@ -9,6 +9,5 @@ font author site: https://forthehearts.net/
 
 icon designer: Icons By Alfredo
 icon designer link: /creator/AlfredoCreates/
-        
+
 {"bg-gradient-0":"#563F33","bg-gradient-1":"#A3A1A1","icon":"#ffffff","font":"#ffffff","slogan":"#ffffff"}
-      

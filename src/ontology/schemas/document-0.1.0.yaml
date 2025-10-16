@@ -39,7 +39,7 @@ entities:
         type: datetime
         description: When the document was last updated
         required: true
-      
+
   - name: Chunk
     description: Represents a chunk of text from a document
     fields:
@@ -100,13 +100,13 @@ relationships:
     target: Chunk
     type: one-to-many
     description: A document contains many chunks
-    
+
   - name: document_entities
     source: Document
     target: Entity
     type: many-to-many
     description: Documents contain entities, entities appear in documents
-    
+
   - name: chunk_entities
     source: Chunk
     target: Entity

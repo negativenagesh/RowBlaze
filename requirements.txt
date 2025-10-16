@@ -15,7 +15,7 @@ aiohttp
 PyYAML
 pytesseract
 pdf2image
-pypandoc 
+pypandoc
 pybase64
 python-csv
 psycopg2-binary
@@ -27,7 +27,7 @@ odfpy
 olefile
 python-docx
 
-python-multipart 
+python-multipart
 httpx
 
 sentence-transformers

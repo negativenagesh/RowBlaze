@@ -47,13 +47,13 @@ from rowblaze.sdk import RowBlazeClient
 
 async def main():
     client = RowBlazeClient(api_url="http://localhost:8000/api")
-    
+
     # Upload a document
     response = await client.upload_document(
         file_path="path/to/document.pdf",
         index_name="my_index"
     )
-    
+
     # Query the document
     result = await client.query(
         question="What are the key points?",
