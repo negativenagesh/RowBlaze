@@ -28,7 +28,7 @@
 
 ## Signup/in, functionalities/available options
 
-<video controls src="Screen Recording 2025-10-16 at 01.48.39.mov" title="Title"></video>
+<video controls width="800" src="Screen%20Recording%202025-10-16%20at%2001.48.39.mov"></video>
 
 ## Setup locally
 
