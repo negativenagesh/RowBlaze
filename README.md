@@ -648,18 +648,468 @@ This Normal RAG architecture provides a solid foundation for accurate, fast docu
 
 ---
 
-A. Ingestion:
+## Document Ingestion Pipeline
 
-RowBlaze is designed to efficiently ingest, process, and index both structured and unstructured data for Retrieval-Augmented Generation (RAG) applications. Below is a detailed breakdown of the ingestion pipeline, highlighting each stage, the tools involved, and the rationale behind the approach.
+RowBlaze implements a sophisticated **multi-stage ingestion pipeline** that transforms raw documents into searchable, semantically-rich knowledge bases. The system handles both structured and unstructured data through specialized parsers, advanced chunking strategies, and comprehensive knowledge extraction.
 
-1. File Intake & Preprocessing
+### Ingestion Architecture Overview
 
-- Supported Formats:
-  - Unstructured: PDF
-  - Structured: PDF, CSV, XLSX
-- File Handling:
-  - Files are read as bytes, ensuring compatibility with various parsers and libraries.
-  - Each file is assigned a unique document ID using a SHA256 hash of its content for traceability and deduplication.
+The ingestion pipeline (`src/core/ingestion/rag_ingestion.py`) orchestrates a complex workflow that:
+
+1. **Intelligently parses** diverse document formats with specialized processors
+2. **Extracts and enriches** content using LLMs with contextual awareness
+3. **Generates knowledge graphs** from unstructured text with entity/relationship extraction
+4. **Creates semantic embeddings** for vector search using OpenAI models
+5. **Applies document-level deduplication** for consistency across chunks
+6. **Indexes optimally** in Elasticsearch with dynamic schema management
+
+### How the Ingestion Process Works
+
+#### 1. File Upload & Authentication (`api/routes/ingestion.py`)
+
+```python
+@router.post("/ingest", response_model=IngestionResponse)
+async def ingest_document(
+    background_tasks: BackgroundTasks,
+    file: UploadFile = File(...),
+    index_name: str = Form(...),
+    # ... authentication and parameters
+):
+```
+
+**Process Flow**:
+- **Authentication**: Validates user credentials via JWT tokens
+- **File Validation**: Checks file type against supported formats
+- **Content Hashing**: Generates SHA256 hash for deduplication
+- **Background Processing**: Queues document for asynchronous processing
+- **Immediate Response**: Returns document ID while processing continues
+
+#### 2. Document ID Generation & Deduplication
+
+```python
+def _generate_doc_id_from_content(content_bytes: bytes) -> str:
+    """Generates a SHA256 hash for the given byte content."""
+    sha256_hash = hashlib.sha256()
+    sha256_hash.update(content_bytes)
+    return sha256_hash.hexdigest()
+```
+
+**Key Features**:
+- **Content-based hashing** prevents duplicate document ingestion
+- **Consistent identification** across multiple uploads of same file
+- **Traceability** throughout the entire processing pipeline
+
+### Supported Document Formats
+
+RowBlaze supports a comprehensive range of document types:
+
+**Text Documents**:
+- **PDF**: Standard and OCR-based (scanned documents)
+- **DOC/DOCX**: Microsoft Word documents with full formatting preservation
+- **ODT**: OpenDocument text files
+- **TXT**: Plain text files
+
+**Structured Data**:
+- **CSV**: Comma-separated values with semantic chunking
+- **XLSX**: Excel spreadsheets with intelligent table processing
+
+**Images**:
+- **JPG, PNG, GIF, BMP, WebP, HEIC, TIFF**: Vision-based content extraction
+
+### Stage 1: File Intake & Preprocessing
+
+#### Document ID Generation
+```python
+def _generate_doc_id_from_content(content_bytes: bytes) -> str:
+    """Generates a SHA256 hash for the given byte content."""
+    sha256_hash = hashlib.sha256()
+    sha256_hash.update(content_bytes)
+    return sha256_hash.hexdigest()
+```
+
+**Key Features**:
+- **Content-based hashing** ensures identical documents get the same ID
+- **Deduplication prevention** at the document level
+- **Traceability** throughout the entire pipeline
+
+#### File Type Detection & Routing
+The system automatically detects file types and routes to specialized processors:
+
+```python
+# Automatic processor selection based on file extension
+if file_extension == ".pdf":
+    doc_iterator = processor.process_pdf(...)
+elif file_extension in [".jpg", ".jpeg", ".png", ...]:
+    doc_iterator = processor.process_image(...)
+elif file_extension == ".xlsx":
+    doc_iterator = processor.process_xlsx_semantic_chunking(...)
+```
+
+### Stage 2: Specialized Content Extraction
+
+#### PDF Processing (`PDFParser` class)
+
+**Multi-Modal Extraction**:
+```python
+async def ingest(self, data: bytes) -> AsyncGenerator[Tuple[str, int], None]:
+    # 1. Extract text from each page
+    page_text = p_page.extract_text()
+
+    # 2. Extract tables as separate blocks
+    tables = p_page.extract_tables()
+    table_markdown = self._convert_table_to_markdown(table)
+
+    # 3. Extract and describe images
+    image_list = fitz_page.get_images(full=True)
+    description = await self._get_image_description(image_bytes)
+```
+
+**Advanced Features**:
+- **Dual-library approach**: Uses both `pdfplumber` and `PyMuPDF` for comprehensive extraction
+- **Table-to-Markdown conversion**: Preserves table structure for downstream processing
+- **Vision-based image description**: Uses OpenAI Vision API to generate detailed image descriptions
+- **OCR fallback**: Automatic OCR processing for scanned documents using Tesseract or Mistral OCR
+
+#### Structured Data Processing
+
+**CSV Semantic Chunking**:
+```python
+async def _create_semantic_csv_chunks(self, header_row: str, data_rows: List[str], file_name: str):
+    # Creates context-aware chunks preserving header-row relationships
+    chunk_text = f"CSV Structure:\n{header_row}\n\nData:\n" + "\n".join(batch_rows)
+    context = f"This is part {part_num} of CSV file '{file_name}' containing rows {start}-{end}."
+```
+
+**XLSX Advanced Processing**:
+```python
+async def _create_semantic_xlsx_chunks(self, data_rows: List[List[str]], file_name: str):
+    # Intelligent row batching with header preservation
+    # Token-aware chunking to prevent context overflow
+    # Header-value mapping for semantic integrity
+```
+
+**Key Innovations**:
+- **Header context preservation**: Each chunk includes column headers for context
+- **Token-aware batching**: Dynamically calculates optimal rows per chunk
+- **Semantic integrity**: Maintains meaningful data relationships across chunks
+
+#### Image Processing (`ImageParser` class)
+
+**Vision-Based Content Extraction**:
+```python
+async def ingest(self, data: bytes, filename: str = None) -> AsyncGenerator[str, None]:
+    # Uses OpenAI Vision API to generate detailed descriptions
+    # Handles multiple image formats
+    # Provides fallback descriptions for processing failures
+```
+
+### Stage 3: Intelligent Chunking Strategies
+
+#### Dynamic Chunking Configuration
+
+The system adapts chunking parameters based on document type:
+
+```python
+if file_extension in [".docx", ".doc", ".odt"]:
+    chunk_size = 2048
+    chunk_overlap = 1024
+else:
+    chunk_size = CHUNK_SIZE_TOKENS  # 20000
+    chunk_overlap = CHUNK_OVERLAP_TOKENS  # 0
+```
+
+**Chunking Features**:
+- **Token-based splitting**: Uses `tiktoken` for accurate token counting
+- **Recursive character splitting**: Preserves semantic boundaries
+- **Context-aware separators**: Prioritizes natural break points (`\n|`, `\n`, `|`, `. `)
+- **File-type optimization**: Different strategies for different document types
+
+#### Page-Aware Chunking
+
+For documents with page structure:
+```python
+async def _generate_all_raw_chunks_from_doc(self, doc_text: str, file_name: str, doc_id: str, page_breaks: List[int] = None):
+    # Assigns accurate page numbers to chunks
+    # Maintains page context throughout processing
+    # Handles documents with and without explicit page breaks
+```
+
+### Stage 4: LLM-Powered Content Enhancement
+
+#### Document Summarization
+
+**Comprehensive Document Analysis**:
+```python
+async def _generate_document_summary(self, full_document_text: str) -> str:
+    # Uses GPT-4o-mini to create high-level document overviews
+    # Provides context for chunk enrichment and knowledge extraction
+    # Fallback to user-provided summaries when available
+```
+
+#### Chunk Enrichment
+
+**Context-Aware Enhancement**:
+```python
+async def _enrich_chunk_content(self, chunk_text: str, document_summary: str,
+                               preceding_chunks_texts: List[str],
+                               succeeding_chunks_texts: List[str]) -> str:
+    # Enriches chunks using surrounding context
+    # Leverages document summary for global context
+    # Maintains chunk size constraints while adding value
+```
+
+**Enrichment Strategy**:
+- **Contextual awareness**: Uses 3 preceding and 3 succeeding chunks for context
+- **Document-level context**: Incorporates overall document summary
+- **Selective application**: Skips enrichment for tabular data and OCR content to preserve accuracy
+
+### Stage 5: Knowledge Graph Extraction
+
+#### Entity and Relationship Extraction
+
+**Structured Knowledge Mining**:
+```python
+async def _extract_knowledge_graph(self, chunk_text: str, document_summary: str) -> Tuple[List[Dict], List[Dict]]:
+    # Uses prompt-engineered LLM calls to extract entities and relationships
+    # Outputs structured XML that's parsed into graph data
+    # Applies sophisticated deduplication algorithms
+```
+
+**XML-Based Extraction Pipeline**:
+```python
+def _parse_graph_xml(self, xml_string: str) -> Tuple[List[Dict], List[Dict]]:
+    # Robust XML parsing with fallback regex extraction
+    # Handles malformed LLM outputs gracefully
+    # Extracts entities with types, descriptions, and relationships
+```
+
+#### Hierarchical Structure Detection
+
+**Advanced Hierarchy Extraction**:
+```python
+async def _extract_hierarchies(self, chunk_text: str, document_summary: str) -> List[Dict]:
+    # Identifies organizational structures, taxonomies, and nested relationships
+    # Creates multi-level hierarchy representations
+    # Links hierarchical elements through structured relationships
+```
+
+#### Comprehensive Deduplication System
+
+**Multi-Level Deduplication**:
+
+1. **Chunk-Level Deduplication**:
+```python
+def _deduplicate_entities(self, entities: List[Dict]) -> List[Dict]:
+    # Normalizes entity names and types for comparison
+    # Merges descriptions from duplicate entities
+    # Preserves embeddings from first occurrence
+```
+
+2. **Document-Level Deduplication**:
+```python
+def _apply_document_level_deduplication(self, processed_chunks: List[Dict], file_name: str):
+    # Ensures consistency across entire document
+    # Creates unified entity and relationship maps
+    # Applies consistent representations to all chunks
+```
+
+**Deduplication Features**:
+- **Fuzzy matching**: Handles variations in entity names and types
+- **Description merging**: Combines information from duplicate entities
+- **Relationship consolidation**: Merges similar relationships with weight preservation
+- **Cross-chunk consistency**: Ensures same entities appear identically throughout document
+
+### Stage 6: Embedding Generation
+
+#### Multi-Modal Embedding Strategy
+
+**Comprehensive Vector Generation**:
+```python
+async def _generate_embeddings(self, texts: List[str]) -> List[List[float]]:
+    # Generates embeddings for chunk text and entity descriptions
+    # Uses OpenAI text-embedding-3-large (3072 dimensions)
+    # Handles batch processing for efficiency
+```
+
+**Embedding Applications**:
+- **Chunk embeddings**: For semantic similarity search
+- **Entity description embeddings**: For knowledge graph semantic search
+- **Batch processing**: Efficient API usage with proper error handling
+- **Fallback handling**: Graceful degradation when embedding generation fails
+
+### Stage 7: Elasticsearch Indexing
+
+#### Dynamic Schema Management
+
+**Intelligent Index Creation**:
+```python
+async def ensure_es_index_exists(client: Any, index_name: str, mappings_body: Dict):
+    # Creates indices with optimized mappings
+    # Updates existing indices with new fields
+    # Handles embedding dimension configuration
+```
+
+**Advanced Mapping Structure**:
+```python
+CHUNKED_PDF_MAPPINGS = {
+    "mappings": {
+        "properties": {
+            "chunk_text": {"type": "text"},
+            "embedding": {"type": "dense_vector", "dims": 3072, "similarity": "cosine"},
+            "metadata": {
+                "properties": {
+                    "entities": {"type": "nested", "properties": {...}},
+                    "relationships": {"type": "nested", "properties": {...}},
+                    "hierarchies": {"type": "nested", "properties": {...}}
+                }
+            }
+        }
+    }
+}
+```
+
+#### Bulk Ingestion Pipeline
+
+**Efficient Data Loading**:
+```python
+# Bulk ingestion with comprehensive error handling
+successes, response = await async_bulk(es_client, actions_for_es, raise_on_error=False)
+```
+
+**Ingestion Features**:
+- **Bulk operations**: Efficient batch processing for large documents
+- **Error resilience**: Detailed error reporting and partial success handling
+- **Resource management**: Proper cleanup of connections and temporary files
+- **Progress tracking**: Comprehensive logging throughout the process
+
+### Stage 8: Quality Assurance & Optimization
+
+#### Processing Optimization
+
+**File-Type Specific Optimizations**:
+- **PDF batching**: Large PDFs processed in 100-page batches to prevent memory issues
+- **Concurrent processing**: Parallel chunk processing for improved performance
+- **Resource management**: Automatic cleanup of temporary files and connections
+- **Error recovery**: Graceful handling of processing failures with detailed logging
+
+#### Content Quality Controls
+
+**Processing Safeguards**:
+- **OCR repetition cleaning**: Removes common OCR artifacts and repeated patterns
+- **Content validation**: Ensures chunks meet minimum quality thresholds
+- **Embedding validation**: Verifies successful embedding generation before indexing
+- **Metadata integrity**: Maintains consistent metadata structure across all chunks
+
+### Integration Points
+
+#### API Integration (`api/routes/ingestion.py`)
+
+**RESTful Ingestion Endpoint**:
+```python
+@router.post("/ingest", response_model=IngestionResponse)
+async def ingest_document(
+    background_tasks: BackgroundTasks,
+    file: UploadFile = File(...),
+    index_name: str = Form(...),
+    # ... additional parameters
+):
+    # Handles file uploads with authentication
+    # Processes documents in background tasks
+    # Returns immediate response with document ID
+```
+
+#### Streamlit Integration (`app/app.py`)
+
+**User-Friendly Upload Interface**:
+- **Drag-and-drop file upload** with format validation
+- **Real-time processing status** with progress indicators
+- **Document options configuration** (OCR, structured PDF, descriptions)
+- **Advanced settings** for power users (chunk size, model selection)
+
+### Performance Characteristics
+
+**Scalability Features**:
+- **Asynchronous processing**: Non-blocking I/O for high throughput
+- **Memory efficiency**: Streaming processing for large documents
+- **Batch optimization**: Intelligent batching for API efficiency
+- **Resource pooling**: Efficient client connection management
+
+**Quality Metrics**:
+- **High accuracy**: Multi-modal extraction ensures comprehensive content capture
+- **Consistency**: Document-level deduplication maintains data integrity
+- **Traceability**: Complete audit trail from source to indexed content
+- **Robustness**: Comprehensive error handling and recovery mechanisms
+
+This ingestion pipeline represents a state-of-the-art approach to document processing, combining traditional NLP techniques with modern LLM capabilities to create rich, searchable knowledge bases from diverse document types.
+
+---
+
+## Document Ingestion Pipeline
+
+RowBlaze implements a sophisticated **multi-stage ingestion pipeline** that transforms raw documents into searchable, semantically-rich knowledge bases. The system handles both structured and unstructured data through specialized parsers, advanced chunking strategies, and comprehensive knowledge extraction.
+
+### Ingestion Architecture Overview
+
+The ingestion pipeline (`src/core/ingestion/rag_ingestion.py`) orchestrates a complex workflow that:
+
+1. **Intelligently parses** diverse document formats with specialized processors
+2. **Extracts and enriches** content using LLMs with contextual awareness
+3. **Generates knowledge graphs** from unstructured text with entity/relationship extraction
+4. **Creates semantic embeddings** for vector search using OpenAI models
+5. **Applies document-level deduplication** for consistency across chunks
+6. **Indexes optimally** in Elasticsearch with dynamic schema management
+
+### How the Ingestion Process Works
+
+#### 1. File Upload & Authentication (`api/routes/ingestion.py`)
+
+```python
+@router.post("/ingest", response_model=IngestionResponse)
+async def ingest_document(
+    background_tasks: BackgroundTasks,
+    file: UploadFile = File(...),
+    index_name: str = Form(...),
+    # ... authentication and parameters
+):
+```
+
+**Process Flow**:
+- **Authentication**: Validates user credentials via JWT tokens
+- **File Validation**: Checks file type against supported formats
+- **Content Hashing**: Generates SHA256 hash for deduplication
+- **Background Processing**: Queues document for asynchronous processing
+- **Immediate Response**: Returns document ID while processing continues
+
+#### 2. Document ID Generation & Deduplication
+
+```python
+def _generate_doc_id_from_content(content_bytes: bytes) -> str:
+    """Generates a SHA256 hash for the given byte content."""
+    sha256_hash = hashlib.sha256()
+    sha256_hash.update(content_bytes)
+    return sha256_hash.hexdigest()
+```
+
+**Key Features**:
+- **Content-based hashing** prevents duplicate document ingestion
+- **Consistent identification** across multiple uploads of same file
+- **Traceability** throughout the entire processing pipeline
+
+### Supported Document Formats
+
+RowBlaze supports a comprehensive range of document types:
+
+**Text Documents**:
+- **PDF**: Standard and OCR-based (scanned documents)
+- **DOC/DOCX**: Microsoft Word documents with full formatting preservation
+- **ODT**: OpenDocument text files
+- **TXT**: Plain text files
+
+**Structured Data**:
+- **CSV**: Comma-separated values with semantic chunking
+- **XLSX**: Excel spreadsheets with intelligent table processing
+
+**Images*
 
 ---
 
