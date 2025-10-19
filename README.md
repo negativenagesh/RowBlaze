@@ -120,7 +120,7 @@ streamlit run app/app.py
 
 - Ensure your Elasticsearch instance is running and accessible.
 - Your OpenAI API key must have access to the specified models.
-- For OCR, install `pytesseract` and ensure Tesseract is in your system PATH.
+- For OCR use Mistrl OCR - API KEY
 - For local reranking, download the model specified by `RERANKER_MODEL_ID` if not using the default.
 
 ---
